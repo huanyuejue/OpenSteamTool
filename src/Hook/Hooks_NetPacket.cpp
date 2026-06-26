@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <future>
 #include <mutex>
 #include <unordered_map>
@@ -342,6 +343,7 @@ namespace Hooks_NetPacket_UserStats {
         if (req.schema_local_version() != -1) {
             req.set_schema_local_version(-1);
             LOG_ACHIEVEMENT_DEBUG("ClientGetUserStats request: forced schema_local_version to -1");
+        }
         }
 
         uint64_t newSteamId = LuaConfig::GetStatSteamId(appId);
@@ -896,6 +898,38 @@ namespace Hooks_NetPacket_RichPresence {
 // ════════════════════════════════════════════════════════════════
 namespace Hooks_NetPacket_OnlineFix {
 
+    // Scan all userdata shortcuts.vdf for the first shortcut appid.
+    // Returns its CGameID (type=shortcut, modid=appid) or 0 if none found.
+    static uint64 FindShortcutGameId()
+    {
+        static uint64 s_cached = 0;
+        static bool   s_tried  = false;
+        if (s_tried) return s_cached;
+        s_tried = true;
+
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(
+                 std::string(SteamInstallPath) + "\\userdata", ec)) {
+            if (!entry.is_directory()) continue;
+            std::ifstream f(entry.path().string() + "\\config\\shortcuts.vdf",
+                            std::ios::binary);
+            if (!f) continue;
+            std::vector<uint8> data((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+            const uint8 kMarker[] = {0x02, 'a','p','p','i','d', 0x00};
+            for (size_t i = 0; i + sizeof(kMarker) + 4 <= data.size(); ++i) {
+                if (memcmp(&data[i], kMarker, sizeof(kMarker)) == 0) {
+                    uint32 appId;
+                    memcpy(&appId, &data[i + sizeof(kMarker)], 4);
+                    s_cached = (static_cast<uint64>(appId) << 32) | (2ULL << 24);
+                    LOG_ONLINEFIX_INFO("Shortcut game_id=0x{:016X}", s_cached);
+                    return s_cached;
+                }
+            }
+        }
+        return 0;
+    }
+
     bool HandleSend(const uint8* pBody, uint32 cbBody,
                     const uint8* pHdr, uint32 cbHdr)
     {
@@ -929,6 +963,27 @@ namespace Hooks_NetPacket_OnlineFix {
             }
         }
 
+        // Rich Presence: rewrite topmost unowned game to use the first
+        // available shortcut's game_id so the server broadcasts it as a
+        // non-Steam game. Falls back to 480 if no shortcuts registered.
+        if (!patched) {
+            AppId_t trackedId = Hooks_NetPacket_RichPresence::g_PlayingAppId;
+            if (trackedId != 0 && trackedId != kOnlineFixAppId) {
+                std::string name = Hooks_Misc::GetGameNameByAppID(trackedId);
+                if (!name.empty()) {
+                    auto* topGame = msg.mutable_games_played(msg.games_played_size() - 1);
+                    uint64 shortcutId = FindShortcutGameId();
+                    if (shortcutId) {
+                        topGame->set_game_id(shortcutId);
+                    } else {
+                        topGame->set_game_id(kOnlineFixAppId);
+                    }
+                    topGame->set_game_extra_info(name);
+                    patched = true;
+                    LOG_ONLINEFIX_INFO("RichPresence: appid {} -> name '{}'", trackedId, name);
+                }
+            }
+        }
         if (!patched) return false;
 
         g_cbSendNewBody = static_cast<uint32>(msg.ByteSizeLong());
