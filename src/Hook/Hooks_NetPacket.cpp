@@ -344,7 +344,6 @@ namespace Hooks_NetPacket_UserStats {
             req.set_schema_local_version(-1);
             LOG_ACHIEVEMENT_DEBUG("ClientGetUserStats request: forced schema_local_version to -1");
         }
-        }
 
         uint64_t newSteamId = LuaConfig::GetStatSteamId(appId);
         req.set_steam_id_for_user(newSteamId);
