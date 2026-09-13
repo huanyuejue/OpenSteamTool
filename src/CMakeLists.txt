@@ -19,6 +19,10 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "" FORCE)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
+# Sources are UTF-8 without BOM (box-drawing comments). Force UTF-8 so the
+# build does not depend on the host system codepage (e.g. GBK on CN Windows).
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
+
 
 if(NOT WIN32)
     message(STATUS "OpenSteamTool: no targets on non-Windows platforms; skipping.")

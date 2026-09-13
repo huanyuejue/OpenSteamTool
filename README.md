@@ -161,6 +161,10 @@ timeout_recv_ms    = 10000
 # Priority: setStat > stats API > hardcoded preset SteamID.
 enable_api = true
 
+[presence]
+# Friend broadcast mode for unlocked games. Options: "spacewar", "none"
+display = "spacewar"
+
 # Additional Lua config directories (optional).
 # Files are loaded after the default <Steam>/config/lua folder.
 # The default folder is always loaded last so user files take priority.

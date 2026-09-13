@@ -155,6 +155,10 @@ timeout_recv_ms    = 10000
 # 优先级：setStat > stats API > 硬编码预设 SteamID
 enable_api = true
 
+[presence]
+# 未拥有游戏的好友广播模式。选项："spacewar"、"none"
+display = "spacewar"
+
 # 额外的 Lua 配置目录（可选）
 # 文件在默认 <Steam>/config/lua 文件夹之后加载
 # 默认文件夹总是最后加载，因此用户文件优先级更高

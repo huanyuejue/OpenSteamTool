@@ -62,6 +62,13 @@ timeout_recv_ms    = 10000
 # Priority: setStat > stats API when enabled and valid > hardcoded preset SteamID.
 enable_api = true
 
+[presence]
+# How unlocked games are shown to friends.
+#   "spacewar" → broadcast the real game name (default)
+#   "none"     → skip the name broadcast patches. Unowned games are then
+#                invisible to friends; -onlinefix games fall back to Spacewar.
+display = "spacewar"
+
 # Additional Lua config directories (optional).
 # Files are loaded after the default <Steam>/config/lua folder.
 # The default folder is always loaded last so user files take priority.
