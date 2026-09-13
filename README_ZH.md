@@ -1,3 +1,5 @@
+> **Fork 说明：** 本项目是 [OpenSteam001/OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool) 的优化分支，为适配 Steam 入库工具 [huanyuejue/Fluent-Steam-Lua](https://github.com/huanyuejue/Fluent-Steam-Lua) 而开发。
+
 <div align="center">
   <img src="docs/logo-animated.svg" width="180" alt="OpenSteamTool logo">
 

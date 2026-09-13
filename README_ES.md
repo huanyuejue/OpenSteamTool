@@ -1,3 +1,5 @@
+> **Nota del fork:** Este es un fork optimizado de [OpenSteam001/OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool), mantenido para su uso con [huanyuejue/Fluent-Steam-Lua](https://github.com/huanyuejue/Fluent-Steam-Lua), una herramienta de gestión de la biblioteca de Steam.
+
 <div align="center">
   <img src="docs/logo-animated.svg" width="180" alt="Logo de OpenSteamTool">
 
