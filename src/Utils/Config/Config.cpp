@@ -11,7 +11,7 @@ namespace Config {
 namespace {
 
     struct Snapshot {
-        std::string manifestProvider = "opensteamtool";
+        std::string manifestProvider = "20770407";
         ManifestTimeouts manifestTimeouts;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
@@ -63,7 +63,7 @@ namespace {
     void ApplyManifestProvider(const std::string& provider) {
         if (!ManifestClient::SetProvider(provider)) {
             LOG_WARN("Unknown manifest.url \"{}\", keeping default", provider);
-            ManifestClient::SetProvider("opensteamtool");
+            ManifestClient::SetProvider("20770407");
         }
     }
 
