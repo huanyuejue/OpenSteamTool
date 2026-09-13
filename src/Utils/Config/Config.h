@@ -42,6 +42,10 @@ namespace Config {
     CloudSettings GetCloudSettings();
     bool GetStatsEnableApi();
 
+    // [presence] — friend broadcast mode: "spacewar" (default) or "none".
+    // Anything other than "none" keeps the current broadcast behavior.
+    bool GetPresenceBroadcastEnabled();
+
     // [manifest] — provider selection lives in ManifestClient (table-driven).
     inline uint32_t manifestTimeoutResolve = 5000;
     inline uint32_t manifestTimeoutConnect = 5000;
@@ -62,6 +66,10 @@ namespace Config {
 
     // [stats]
     inline bool statsEnableApi = true;
+
+    // [presence] — "spacewar" shows the real game name to friends (default),
+    // "none" skips the name broadcast patches.
+    inline std::string presenceDisplay = "spacewar";
 
     // [inject] - optional library injection into game processes.
     inline bool injectEnabled = false;

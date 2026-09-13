@@ -148,6 +148,10 @@ timeout_recv_ms    = 10000
 # Prioridad: setStat > API de estadísticas > SteamID predefinido.
 enable_api = true
 
+[presence]
+# Modo de difusión a amigos para juegos no poseídos. Opciones: "spacewar", "none"
+display = "spacewar"
+
 # Directorios adicionales de configuración de Lua (opcional).
 # Los archivos se cargan después de la carpeta predeterminada <Steam>/config/lua.
 # La carpeta predeterminada siempre se carga al final para que los archivos del usuario tengan prioridad.

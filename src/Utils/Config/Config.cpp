@@ -18,6 +18,7 @@ namespace {
         std::vector<std::string> luaPaths;
         std::string remoteUrlTemplate;
         bool statsEnableApi = true;
+        std::string presenceDisplay = "spacewar";
         InjectionSettings injection;
         CloudSettings cloud;
     };
@@ -53,6 +54,7 @@ namespace {
         luaPaths               = snapshot.luaPaths;
         remoteUrlTemplate      = snapshot.remoteUrlTemplate;
         statsEnableApi         = snapshot.statsEnableApi;
+        presenceDisplay        = snapshot.presenceDisplay;
         injectEnabled          = snapshot.injection.enabled;
         injectLibraryX86       = snapshot.injection.libraryX86;
         injectLibraryX64       = snapshot.injection.libraryX64;
@@ -148,6 +150,13 @@ namespace {
                 }
             }
 
+            // [presence]
+            if (auto presence = tbl["presence"].as_table()) {
+                if (auto val = (*presence)["display"].value<std::string>()) {
+                    snapshot.presenceDisplay = *val;
+                }
+            }
+
             // [inject]
             if (auto inject = tbl["inject"].as_table()) {
                 if (auto val = (*inject)["enabled"].value<bool>())
@@ -239,6 +248,11 @@ namespace {
     bool GetStatsEnableApi() {
         std::lock_guard lock(g_mutex);
         return statsEnableApi;
+    }
+
+    bool GetPresenceBroadcastEnabled() {
+        std::lock_guard lock(g_mutex);
+        return presenceDisplay != "none";
     }
 
     CloudSettings GetCloudSettings() {

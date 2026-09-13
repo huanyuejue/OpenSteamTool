@@ -1,5 +1,6 @@
 #include "Hooks_NetPacket.h"
 #include "Utils/SteamMetadata/ManifestClient.h"
+#include "Utils/Config/Config.h"
 #include "Hooks_Misc.h"
 #include "HookMacros.h"
 #include "dllmain.h"
@@ -629,6 +630,13 @@ namespace Hooks_NetPacket_RichPresence {
     // does not conflate KV state.
     std::unordered_map<AppId_t, std::vector<std::pair<std::string, std::string>>> g_RPKvsByAppId;
 
+    // With [presence] display = "none" I skip all friend-broadcast patches
+    // and let the server broadcast the unmodified state; any other value
+    // keeps the current behavior.
+    static bool BroadcastEnabled() {
+        return Config::GetPresenceBroadcastEnabled();
+    }
+
     // Walk Steam's binary KV1 stream (a top-level "RP" struct around
     // string KVs) and collect every string KV at any depth.  Type 0x00
     // starts a struct, 0x01 a string KV, 0x08 ends a struct.  String KVs
@@ -764,7 +772,7 @@ namespace Hooks_NetPacket_RichPresence {
         LOG_RICHPRESENCE_DEBUG("RP upload appid={}: kv_bytes={} extracted={} pairs",
             g_PlayingAppId, kv.size(), kvs.size());
 
-        if (BuildInject(g_PlayingAppId)) g_InjectPending = true;
+        if (BroadcastEnabled() && BuildInject(g_PlayingAppId)) g_InjectPending = true;
     }
 
     void TrackSend(const CMsgClientGamesPlayed& msg, const uint8* pHdr, uint32 cbHdr)
@@ -803,6 +811,10 @@ namespace Hooks_NetPacket_RichPresence {
             CloudRedirectHost::NotifyAppRunning(oldTracked, false);
         if (newTracked != 0)
             CloudRedirectHost::NotifyAppRunning(newTracked, true);
+
+        // With display = "none" I skip scheduling broadcast injects here;
+        // the running-state tracking above stays intact.
+        if (!BroadcastEnabled()) return;
 
         if (newTracked != 0) {
             LOG_RICHPRESENCE_INFO("Tracking topmost appid {}", newTracked);
@@ -848,6 +860,10 @@ namespace Hooks_NetPacket_RichPresence {
             g_cbSelfBody     = cbBody;
             g_HaveSelfCached = true;
         }
+
+        // With display = "none" I only cache the template (so switching
+        // back works) without patching the live server push.
+        if (!BroadcastEnabled()) return false;
 
         if (g_PlayingAppId == 0) return false;
 
@@ -941,6 +957,11 @@ namespace Hooks_NetPacket_OnlineFix {
 
         Hooks_NetPacket_RichPresence::TrackSend(msg, pHdr, cbHdr);
 
+        // With display = "none" I skip the name-broadcast cosmetics below
+        // and pass the packet through; -onlinefix games then show as
+        // Spacewar server-side.
+        const bool broadcast = Hooks_NetPacket_RichPresence::BroadcastEnabled();
+
         bool patched = false;
         for (int i = 0; i < msg.games_played_size(); ++i) {
             auto* game = msg.mutable_games_played(i);
@@ -948,7 +969,7 @@ namespace Hooks_NetPacket_OnlineFix {
 
             // SpawnProcess rewrites pGameID to 480, so game_id is already 480.
             // Fill game_extra_info with the real game name.
-            if (appid == kOnlineFixAppId) {
+            if (broadcast && appid == kOnlineFixAppId) {
                 AppId_t realAppId = Hooks_Misc::ResolveAppId();
                 if (realAppId && LuaConfig::HasDepot(realAppId)) {
                     std::string name = Hooks_Misc::GetGameNameByAppID(realAppId);
@@ -965,7 +986,7 @@ namespace Hooks_NetPacket_OnlineFix {
         // Rich Presence: rewrite topmost unowned game to use the first
         // available shortcut's game_id so the server broadcasts it as a
         // non-Steam game. Falls back to 480 if no shortcuts registered.
-        if (!patched) {
+        if (broadcast && !patched) {
             AppId_t trackedId = Hooks_NetPacket_RichPresence::g_PlayingAppId;
             if (trackedId != 0 && trackedId != kOnlineFixAppId) {
                 std::string name = Hooks_Misc::GetGameNameByAppID(trackedId);
