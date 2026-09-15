@@ -37,7 +37,7 @@
 - Desbloquea una cantidad ilimitada de juegos que no poseas.
 - Desbloquea todos los DLC para juegos que no poseas.
 - Soporta la carga automática de claves de descifrado de depósitos(depots) desde la configuración de Lua.
-- Soporta la descarga automática de manifiestos a través de las APIs ascendentes (upstream APIs) de `20770407` / `opensteamtool` / `steamrun` / `wudrm` (por defecto es 20770407), o mediante un endpoint personalizado de Lua (ver [Manifest a traves de Lua](#manifest-via-lua)).
+- Soporta la descarga automática de manifiestos a través de las APIs ascendentes (upstream APIs) de `20770407` / `opensteamtool` / `steamrun` / `wudrm` (por defecto es wudrm), o mediante un endpoint personalizado de Lua (ver [Manifest a traves de Lua](#manifest-via-lua)).
 - Soporta la descarga de juegos protegidos o DLCs que requieran un token de acceso.
 - Soporta la vinculación de manifiestos para evitar que juegos específicos se actualicen.
 
@@ -137,7 +137,7 @@ level = "info"
 
 [manifest]
 # API ascendente para los códigos de solicitud de manifiestos de depósito. Opciones: "20770407", "opensteamtool", "steamrun", "wudrm"
-url = "20770407"
+url = "wudrm"
 
 # Tiempos de espera HTTP (timeouts) para las solicitudes de manifiestos (en milisegundos)
 timeout_resolve_ms = 5000

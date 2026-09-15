@@ -42,7 +42,7 @@
 - Unlock an unlimited number of unowned games.
 - Unlock all DLCs for unowned games.
 - Support auto load depot decryption keys from Lua config.
-- Support auto manifest download via `20770407` / `opensteamtool` / `steamrun` / `wudrm` upstream APIs (default is `20770407`), or a custom Lua endpoint (see [Manifest via Lua](#manifest-via-lua)).
+- Support auto manifest download via `20770407` / `opensteamtool` / `steamrun` / `wudrm` upstream APIs (default is `wudrm`), or a custom Lua endpoint (see [Manifest via Lua](#manifest-via-lua)).
 - Support downloading protected games or DLCs that require an access token.
 - Support binding manifest to prevent specific games from being updated.
 
@@ -150,7 +150,7 @@ level = "info"
 
 [manifest]
 # Upstream API for depot manifest request codes.  Options: "20770407", "opensteamtool", "steamrun", "wudrm"
-url = "20770407"
+url = "wudrm"
 
 # HTTP timeouts for manifest requests (milliseconds)
 timeout_resolve_ms = 5000
