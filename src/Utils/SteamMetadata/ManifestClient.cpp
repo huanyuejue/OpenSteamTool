@@ -44,11 +44,12 @@ namespace ManifestClient {
                                         // or two %llu (depotId, gid) when needsDepot
         Parser           parse;
         bool             needsDepot;
+        const wchar_t*   headers;        // extra request headers (e.g. UA gate), or nullptr
     };
 
     consteval Provider Make(std::string_view name, const char* url, Parser parse,
-                            bool needsDepot = false) {
-        return {name, url, parse, needsDepot};
+                            bool needsDepot = false, const wchar_t* headers = nullptr) {
+        return {name, url, parse, needsDepot, headers};
     }
 
     static constexpr Provider kProviders[] = {
@@ -56,6 +57,8 @@ namespace ManifestClient {
         Make("opensteamtool", "https://manifest.opensteamtool.com/%llu", ParsePlainUint),
         Make("wudrm",         "http://gmrc.wudrm.com/manifest/%llu",     ParsePlainUint),
         Make("steamrun",      "https://manifest.steam.run/api/manifest/%llu", ParseSteamRunJson),
+        Make("manifestdex",   "https://manifest.manifestdex.com/%llu",   ParsePlainUint, false,
+             L"User-Agent: ManifestDeX/1.0"),
     };
 
     static const Provider* g_active = &kProviders[0];   // 20770407
@@ -104,7 +107,7 @@ namespace ManifestClient {
             urlLog,
             nullptr,
             0,
-            nullptr,
+            p.headers,
             timeouts.resolve,
             timeouts.connect,
             timeouts.send,
