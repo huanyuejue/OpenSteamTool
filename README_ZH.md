@@ -206,8 +206,8 @@ OpenSteamTool 不再在 DLL 中内置字节模式签名。相反，每次启动�
 
 查找顺序（每次启动）：
 
-1. **GitHub raw** — `https://raw.githubusercontent.com/OpenSteam001/steam-monitor/pattern/...`。规范来源
-2. **jsDelivr CDN** — 如果 GitHub raw 无法访问（连接拒绝/超时/5xx）时自动回退。无需配置。在 `raw.githubusercontent.com` 被封锁但 jsDelivr 可访问的地区很有用（如中国大陆）
+1. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`。默认来源
+2. **GitHub raw** — 如果 jsDelivr 无法访问（连接拒绝/超时/5xx）时自动回退。无需配置。配置 `[remote] order = "github-first"` 可恢复之前的 GitHub 优先顺序
 3. **本地缓存** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`。仅当远程不可达时使用。每次成功远程获取后覆盖缓存
 
 每次启动都会咨询远程，因此用户自动获取上游重新发布（例如机器人添加新签名或修复现有签名），无需清除任何缓存
@@ -220,12 +220,14 @@ OpenSteamTool 不再在 DLL 中内置字节模式签名。相反，每次启动�
 
 #### 使用不同的镜像
 
-对大多数用户来说，内置的 **GitHub -> jsDelivr** 回退已经足够。要使用私有镜像或内网服务器，配置完整的 URL 模板。自定义镜像替换内置远程源；本地缓存回退仍然可用
+对大多数用户来说，内置的 **jsDelivr -> GitHub** 回退已经足够。要使用私有镜像或内网服务器，配置完整的 URL 模板。自定义镜像替换内置远程源；本地缓存回退仍然可用
 
 模板必须包含 `{channel}`、`{component}` 和 `{sha256}`。当前使用的通道是 `pattern` 和 `ipc`
 
 ```toml
 [remote]
+# 镜像顺序："jsdelivr-first"（默认）或 "github-first"。
+# order = "jsdelivr-first"
 url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 # url_template = "https://fast.jsdelivr.net/gh/OpenSteam001/steam-monitor@{channel}/{component}/{sha256}.toml"
 ```
@@ -262,7 +264,7 @@ url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 - 带有 MSVC（x64 工具链）的 Visual Studio 2022
 
 ### 运行时要求
-- Steam 更新后首次启动需要访问 `raw.githubusercontent.com` 的出站 HTTPS（参见 [Steam 版本兼容性](#steam-版本兼容性)）。之后会缓存
+- Steam 更新后首次启动需要访问元数据镜像（`cdn.jsdelivr.net`、`raw.githubusercontent.com`）的出站 HTTPS（参见 [Steam 版本兼容性](#steam-版本兼容性)）。之后会缓存
 
 ### 快速构建
 ```powershell

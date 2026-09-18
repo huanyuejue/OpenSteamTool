@@ -198,8 +198,8 @@ OpenSteamTool ya no incluye firmas de patrones de bytes (byte-pattern signatures
 
 Orden de búsqueda (en cada inicio):
 
-1.**GitHub raw** — `https://raw.githubusercontent.com/OpenSteam001/steam-monitor/pattern/....` Fuente canónica.
-2.**jsDelivr CDN** — alternativa automática si GitHub raw no está disponible (conexión rechazada / tiempo de espera / error 5xx). No requiere configuración. Útil en regiones donde `raw.githubusercontent.com` está bloqueado pero jsDelivr es accesible (por ejemplo, China continental).
+1.**jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/....` Fuente predeterminada.
+2.**GitHub raw** — alternativa automática si jsDelivr no está disponible (conexión rechazada / tiempo de espera / error 5xx). No requiere configuración. Configura `[remote] order = "github-first"` para volver al orden anterior (GitHub primero).
 3.**Caché local** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. Se utiliza **únicamente** cuando el servidor remoto no está disponible. La caché se sobrescribe tras cada consulta remota exitosa.
 
 Se consulta al servidor remoto en cada inicio para que los usuarios obtengan automáticamente las nuevas publicaciones del proyecto principal (por ejemplo, si el bot añade una nueva firma o corrige una existente) sin tener que limpiar ninguna caché.
@@ -212,12 +212,14 @@ También puedes colocar manualmente un archivo TOML de patrones en el directorio
 
 #### Uso de un espejo (mirror) diferente
 
-Para la mayoría de los usuarios, la alternativa integrada de **GitHub -> jsDelivr** es suficiente. Si deseas utilizar un espejo privado o un servidor de intranet, configura una plantilla de URL completa. Un espejo personalizado reemplazará las fuentes remotas integradas; la alternativa de la caché local seguirá estando disponible.
+Para la mayoría de los usuarios, la alternativa integrada de **jsDelivr -> GitHub** es suficiente. Si deseas utilizar un espejo privado o un servidor de intranet, configura una plantilla de URL completa. Un espejo personalizado reemplazará las fuentes remotas integradas; la alternativa de la caché local seguirá estando disponible.
 
 La plantilla debe incluir obligatoriamente `{channel}`, `{component}` y `{sha256}`. Los canales utilizados actualmente son `pattern` e `ipc`.
 
 ```toml
 [remote]
+# Orden de espejos: "jsdelivr-first" (predeterminado) o "github-first".
+# order = "jsdelivr-first"
 url_template = "https://tu.servidor/{channel}/{component}/{sha256}.toml"
 # url_template = "https://fast.jsdelivr.net/gh/OpenSteam001/steam-monitor@{channel}/{component}/{sha256}.toml"
 ```
@@ -254,7 +256,7 @@ El nivel de registro se controla mediante `[log] level` en `opensteamtool.toml`.
 - Visual Studio 2022 with MSVC (x64 toolchain)
 
 ### Requisitos de ejecución
-- Acceso HTTPS saliente a `raw.githubusercontent.com` en el primer inicio tras una actualización de Steam (ver [Compatibilidad con versiones de Steam](#steam-version-compatibility)). Posteriormente se almacena en caché.
+- Acceso HTTPS saliente a los espejos de metadatos (`cdn.jsdelivr.net`, `raw.githubusercontent.com`) en el primer inicio tras una actualización de Steam (ver [Compatibilidad con versiones de Steam](#steam-version-compatibility)). Posteriormente se almacena en caché.
 
 ### Compilación rápida
 ```powershell

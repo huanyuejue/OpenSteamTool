@@ -4,6 +4,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <cctype>
 #include <filesystem>
 #include <mutex>
 
@@ -17,6 +18,7 @@ namespace {
         std::string logDir;
         std::vector<std::string> luaPaths;
         std::string remoteUrlTemplate;
+        std::string remoteOrder = "jsdelivr-first";
         bool statsEnableApi = true;
         std::string presenceDisplay = "spacewar";
         InjectionSettings injection;
@@ -25,6 +27,13 @@ namespace {
 
     std::mutex g_mutex;
     bool g_loadedOnce = false;
+
+    // order 归一化成小写再比对，避免大小写写错导致回退顺序不符合预期
+    static std::string NormalizeRemoteOrder(std::string s) {
+        for (auto& c : s)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    }
 
     const char* ToString(LogLevel level) {
         switch (level) {
@@ -53,6 +62,7 @@ namespace {
         logDir                 = snapshot.logDir;
         luaPaths               = snapshot.luaPaths;
         remoteUrlTemplate      = snapshot.remoteUrlTemplate;
+        remoteOrder            = snapshot.remoteOrder;
         statsEnableApi         = snapshot.statsEnableApi;
         presenceDisplay        = snapshot.presenceDisplay;
         injectEnabled          = snapshot.injection.enabled;
@@ -87,12 +97,13 @@ namespace {
             LOG_INFO("Config file not found, using defaults");
             ApplyManifestProvider(snapshot.manifestProvider);
             LoadResult result = ApplySnapshotLocked(snapshot);
-            LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={}",
+            LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={} remote.order={}",
                      ManifestClient::ActiveProviderName(),
                      ToString(GetLogLevel()),
                      (uint32_t)GetLuaPaths().size(),
                      GetStatsEnableApi(),
-                     GetRemoteUrlTemplate().empty() ? "<default>" : GetRemoteUrlTemplate());
+                     GetRemoteUrlTemplate().empty() ? "<default>" : GetRemoteUrlTemplate(),
+                     GetRemoteOrder());
             return result;
         }
 
@@ -141,6 +152,14 @@ namespace {
                 if (auto val = (*remote)["url_template"].value<std::string>()) {
                     snapshot.remoteUrlTemplate = *val;
                 }
+                if (auto val = (*remote)["order"].value<std::string>()) {
+                    const std::string order = NormalizeRemoteOrder(*val);
+                    if (order == "github-first" || order == "jsdelivr-first") {
+                        snapshot.remoteOrder = order;
+                    } else {
+                        LOG_WARN("Unknown remote.order \"{}\", keeping default \"{}\"", *val, snapshot.remoteOrder);
+                    }
+                }
             }
 
             // [stats]
@@ -177,12 +196,13 @@ namespace {
 
             ApplyManifestProvider(snapshot.manifestProvider);
             LoadResult result = ApplySnapshotLocked(snapshot);
-            LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={}",
+            LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={} remote.order={}",
                      ManifestClient::ActiveProviderName(),
                      ToString(snapshot.logLevel),
                      (uint32_t)snapshot.luaPaths.size(),
                      snapshot.statsEnableApi,
-                     snapshot.remoteUrlTemplate.empty() ? "<default>" : snapshot.remoteUrlTemplate);
+                     snapshot.remoteUrlTemplate.empty() ? "<default>" : snapshot.remoteUrlTemplate,
+                     snapshot.remoteOrder);
             return result;
 
         } catch (const toml::parse_error& e) {
@@ -234,6 +254,11 @@ namespace {
     std::string GetRemoteUrlTemplate() {
         std::lock_guard lock(g_mutex);
         return remoteUrlTemplate;
+    }
+
+    std::string GetRemoteOrder() {
+        std::lock_guard lock(g_mutex);
+        return remoteOrder;
     }
 
     InjectionSettings GetInjectionSettings() {

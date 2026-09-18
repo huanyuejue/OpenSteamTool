@@ -38,6 +38,7 @@ namespace Config {
     std::string GetLogDir();
     std::vector<std::string> GetLuaPaths();
     std::string GetRemoteUrlTemplate();
+    std::string GetRemoteOrder();
     InjectionSettings GetInjectionSettings();
     CloudSettings GetCloudSettings();
     bool GetStatsEnableApi();
@@ -63,6 +64,8 @@ namespace Config {
 
     // [remote]
     inline std::string remoteUrlTemplate;
+    // 默认 jsDelivr 优先、GitHub 兜底；配成 "github-first" 切回老顺序
+    inline std::string remoteOrder = "jsdelivr-first";
 
     // [stats]
     inline bool statsEnableApi = true;

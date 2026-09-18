@@ -102,9 +102,14 @@ enabled = false
 # library = "cloud_redirect.dll"
 
 [remote]
-# Optional metadata mirror. Leave unset to use GitHub with jsDelivr fallback.
+# Optional metadata mirror. Leave unset to use jsDelivr with GitHub fallback.
 # A custom mirror replaces the built-in remote sources and must include all
 # three placeholders: {channel}, {component}, and {sha256}.
+#
+# Built-in mirror order (default: jsdelivr-first).
+#   "jsdelivr-first" → try jsDelivr first, fall back to GitHub raw
+#   "github-first"   → try GitHub raw first, fall back to jsDelivr
+# order = "jsdelivr-first"
 #
 # url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 # url_template = "https://fast.jsdelivr.net/gh/OpenSteam001/steam-monitor@{channel}/{component}/{sha256}.toml"

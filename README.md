@@ -212,8 +212,8 @@ OpenSteamTool no longer ships byte-pattern signatures inside the DLL. Instead, o
 
 Lookup order (every launch):
 
-1. **GitHub raw** — `https://raw.githubusercontent.com/OpenSteam001/steam-monitor/pattern/...`. Canonical source.
-2. **jsDelivr CDN** — automatic fallback if GitHub raw is unreachable (connection refused / timeout / 5xx). No configuration required. Useful in regions where `raw.githubusercontent.com` is blocked but jsDelivr is reachable (e.g. mainland China).
+1. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`. Default source.
+2. **GitHub raw** — automatic fallback if jsDelivr is unreachable (connection refused / timeout / 5xx). No configuration required. Set `[remote] order = "github-first"` to restore the previous GitHub-first order.
 3. **Local cache** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. Used **only** when remote is unreachable. The cache is overwritten after every successful remote fetch.
 
 Remote is consulted on every launch so users automatically pick up upstream re-publications (e.g. the bot adding a new signature, or fixing an existing one) without having to clear any cache.
@@ -226,12 +226,14 @@ You can also drop a pattern TOML into the cache directory manually if you know t
 
 #### Using a different mirror
 
-For most users, the built-in **GitHub -> jsDelivr** fallback is enough. To use a private mirror or intranet server, configure a full URL template. A custom mirror replaces the built-in remote sources; local cache fallback remains available.
+For most users, the built-in **jsDelivr -> GitHub** fallback is enough. To use a private mirror or intranet server, configure a full URL template. A custom mirror replaces the built-in remote sources; local cache fallback remains available.
 
 The template must include `{channel}`, `{component}`, and `{sha256}`. Channels currently used are `pattern` and `ipc`.
 
 ```toml
 [remote]
+# Mirror order: "jsdelivr-first" (default) or "github-first".
+# order = "jsdelivr-first"
 url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 # url_template = "https://fast.jsdelivr.net/gh/OpenSteam001/steam-monitor@{channel}/{component}/{sha256}.toml"
 ```
@@ -268,7 +270,7 @@ The log level is controlled by `[log] level` in `opensteamtool.toml`.
 - Visual Studio 2022 with MSVC (x64 toolchain)
 
 ### Runtime requirements
-- Outbound HTTPS access to `raw.githubusercontent.com` on first launch after a Steam update (see [Steam version compatibility](#steam-version-compatibility)). Cached afterwards.
+- Outbound HTTPS access to the metadata mirrors (`cdn.jsdelivr.net`, `raw.githubusercontent.com`) on first launch after a Steam update (see [Steam version compatibility](#steam-version-compatibility)). Cached afterwards.
 
 ### Quick build
 ```powershell

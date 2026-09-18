@@ -56,16 +56,20 @@ namespace {
     static std::vector<std::string> BuildUrlTemplates()
     {
         const std::string remoteUrlTemplate = Config::GetRemoteUrlTemplate();
-        if (remoteUrlTemplate.empty())
-            return { kGithubTemplate, kJsdelivrTemplate };
+        if (!remoteUrlTemplate.empty()) {
+            if (!IsValidTemplate(remoteUrlTemplate)) {
+                LOG_WARN("RemoteToml: remote.url_template must contain "
+                         "{channel}, {component}, and {sha256}; remote fetch disabled");
+                return {};
+            }
 
-        if (!IsValidTemplate(remoteUrlTemplate)) {
-            LOG_WARN("RemoteToml: remote.url_template must contain "
-                     "{channel}, {component}, and {sha256}; remote fetch disabled");
-            return {};
+            return { remoteUrlTemplate };
         }
 
-        return { remoteUrlTemplate };
+        // 默认优先请求 jsDelivr，失败再回退 GitHub，保证直连环境下的可用性
+        if (Config::GetRemoteOrder() == "github-first")
+            return { kGithubTemplate, kJsdelivrTemplate };
+        return { kJsdelivrTemplate, kGithubTemplate };
     }
 } // namespace
 
