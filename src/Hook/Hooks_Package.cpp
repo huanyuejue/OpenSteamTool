@@ -100,19 +100,37 @@ namespace {
         TryInitFakeLicenseOnce();
 
         if (LuaConfig::HasDepot(appId,false)) {
-            if (result && pOwn->ExistInPackageNums > 1) {
+            // 家庭共享借来的游戏不计入真拥有，避免后续被排除在注入之外
+            bool isTrulyOwned = result && (pOwn->ExistInPackageNums > 1) && !pOwn->bFamilyShared && !pOwn->bBorrowed;
+            if (isTrulyOwned) {
                 // Actually owned — record so HasDepot excludes it going forward
                 LuaConfig::MarkOwned(appId);
                 pOwn->ReleaseState = EAppReleaseState::Released;
             } else {
                 pOwn->PackageId    = kInjectedPackageId;
                 pOwn->ReleaseState = EAppReleaseState::Released;
-                pOwn->bOwnsLicense = true; //This forces DLCs on steam family shared games that u dont own when adding their appid via .lua
+                pOwn->bOwnsLicense = true; // This forces DLCs and enables decoupled family shared games
                 // Setting this free flag to false will hide it from the library UI.
                 pOwn->bFreeLicense = false;
+                pOwn->bFamilyShared   = false;
+                pOwn->bBorrowed       = false;
+                pOwn->bLicenseLocked  = false;
+                // SteamId32 保持原始值：库详情页按所有者是否为本人判定家庭横幅，清零会误触发
                 return true;
             }
         }
+
+        // 非 Lua 名单的纯借用游戏同样去锁去标记，压制库锁定与玩法限制
+        if (pOwn && (pOwn->bFamilyShared || pOwn->bBorrowed)) {
+            if (pOwn->bLicenseLocked) {
+                LOG_PACKAGE_DEBUG("CheckAppOwnership: Clearing bLicenseLocked for shared AppId={}", appId);
+                pOwn->bLicenseLocked = false;
+            }
+            pOwn->bBorrowed = false;
+            pOwn->bOwnsLicense = true;
+            result = true;
+        }
+
         return result;
     }
 }

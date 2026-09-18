@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <future>
 #include <mutex>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -468,9 +469,36 @@ namespace Hooks_NetPacket_ETicket {
 // ════════════════════════════════════════════════════════════════
 namespace Hooks_NetPacket_FamilySharing {
 
+    void ClearBody(const uint8*, uint32);
+
+    // NotifyRunningApps 消毒：保留合法的 family_groupid，只清空 running_apps。
+    // 客户端收到结构合法的"0 个游戏在运行"通知，主动清除库锁定状态。
+    void HandleRecv_NotifyRunningApps(const uint8* pBody, uint32 cbBody)
+    {
+        CFamilyGroupsClient_NotifyRunningApps_Notification notify;
+        if (notify.ParseFromArray(pBody, cbBody)) {
+            const int runningCount = notify.running_apps_size();
+            notify.clear_running_apps();
+
+            const auto encSize = notify.ByteSizeLong();
+            if (encSize <= sizeof(g_NewBody) && notify.SerializeToArray(g_NewBody, static_cast<int>(sizeof(g_NewBody)))) {
+                g_cbNewBody = static_cast<uint32>(encSize);
+                g_NeedReplaceBody = true;
+                LOG_NETPACKET_INFO("FamilySharing: Sanitized NotifyRunningApps (family_groupid {}, cleared {} running apps)",
+                                   notify.family_groupid(), runningCount);
+                return;
+            }
+        }
+
+        // 解析失败时回退为丢弃整包
+        ClearBody(pBody, cbBody);
+        LOG_NETPACKET_DEBUG("FamilySharing: Cleared NotifyRunningApps body (fallback)");
+    }
+
+    // 丢弃入方向锁库/停玩通知，压制踢人计时
     void ClearBody(const uint8*, uint32)
     {
-        LOG_NETPACKET_DEBUG("Clearing family sharing message...");
+        LOG_NETPACKET_DEBUG("FamilySharing: Clearing incoming family sharing lock/stop notification...");
         g_cbNewBody = 0;
         g_NeedReplaceBody = true;
     }
@@ -981,6 +1009,14 @@ namespace Hooks_NetPacket_OnlineFix {
                     }
                 }
             }
+
+            // 家庭共享并发保护：抹掉出借方 owner_id，服务器不再锁出借方的库
+            if (game->has_owner_id() && game->owner_id() != 0 && game->owner_id() != 1) {
+                LOG_NETPACKET_INFO("FamilySharing: Masking owner_id {} -> 1 for game_id {}",
+                                   game->owner_id(), game->game_id());
+                game->set_owner_id(1);
+                patched = true;
+            }
         }
 
         // Rich Presence: rewrite topmost unowned game to use the first
@@ -1386,7 +1422,7 @@ namespace {
         switch (Fnv1aHash(targetJobName)) {
 
         case HASH_JOB_NotifyRunningApps:
-            Hooks_NetPacket_FamilySharing::ClearBody(pBody, cbBody);
+            Hooks_NetPacket_FamilySharing::HandleRecv_NotifyRunningApps(pBody, cbBody);
             return;
 
         case HASH_JOB_GetUserStats:
@@ -1398,6 +1434,13 @@ namespace {
             return;
 
         // ---- add new 147 service methods here ----
+        default:
+            // job 名带版本号后缀时走子串兜底，保证消毒逻辑不漏
+            if (std::string_view(targetJobName).find("NotifyRunningApps") != std::string_view::npos) {
+                Hooks_NetPacket_FamilySharing::HandleRecv_NotifyRunningApps(pBody, cbBody);
+                return;
+            }
+            break;
         }
     }
 
@@ -1416,7 +1459,9 @@ namespace {
 
         switch (eMsg) {
 
-        case k_EMsgServiceMethodResponse: {     // 147
+        case k_EMsgServiceMethod:                      // 146
+        case k_EMsgServiceMethodResponse:              // 147
+        case k_EMsgServiceMethodSendToClient: {        // 152
             CMsgProtoBufHeader hdr;
             if (hdr.ParseFromArray(pHdr, cbHdr) && hdr.has_target_job_name())
                 RecvServiceJob(hdr.target_job_name().c_str(), pBody, cbBody, pHdr, cbHdr);
@@ -1433,6 +1478,7 @@ namespace {
                 pBody, cbBody);
             return;
 
+        case k_EMsgClientSharedLibraryLockStatus:      // 9405
         case k_EMsgClientSharedLibraryStopPlaying:     // 9406
             Hooks_NetPacket_FamilySharing::ClearBody(pBody, cbBody);
             return;
