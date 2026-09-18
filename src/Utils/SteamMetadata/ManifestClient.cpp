@@ -5,6 +5,7 @@
 #include "Utils/Logging/Log.h"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <mutex>
 #include <string_view>
@@ -61,34 +62,35 @@ namespace ManifestClient {
              L"User-Agent: ManifestDeX/1.0"),
     };
 
-    static const Provider* g_active = &kProviders[0];   // wudrm
-    static std::mutex      g_mutex;
+    static std::atomic<const Provider*> g_active{&kProviders[0]};   // wudrm
+    // Lua 取码函数共用全局 Lua 状态，串行调用；HTTP 请求无锁并发执行
+    static std::mutex g_luaMutex;
 
     bool SetProvider(std::string_view name) {
-        std::lock_guard<std::mutex> lock(g_mutex);
         for (const auto& p : kProviders)
-            if (p.name == name) { 
-                g_active = &p; 
-                return true; 
+            if (p.name == name) {
+                g_active.store(&p, std::memory_order_release);
+                return true;
             }
         return false;
     }
 
     const char* ActiveProviderName() {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        return g_active->name.data(); 
+        const auto* p = g_active.load(std::memory_order_acquire);
+        return p ? p->name.data() : "";
     }
 
     // ── request ───────────────────────────────────────────────────
 
     void Shutdown() {
-        std::lock_guard<std::mutex> lock(g_mutex);
     }
 
     // ── fetch ─────────────────────────────────────────────────────
 
     static bool FetchActive(uint64_t gid, uint64_t* outCode, AppId_t depotId = 0) {
-        const Provider& p = *g_active;
+        const auto* active = g_active.load(std::memory_order_acquire);
+        if (!active) return false;
+        const Provider& p = *active;
         const Config::ManifestTimeouts timeouts = Config::GetManifestTimeouts();
 
         char urlLog[256];
@@ -124,9 +126,8 @@ namespace ManifestClient {
     bool FetchManifestRequestCode(uint64_t manifestGid, uint64_t* outRequestCode,
                                   AppId_t appId, AppId_t depotId)
     {
-        std::lock_guard<std::mutex> lock(g_mutex);
-
         if (appId && depotId && LuaConfig::HasManifestCodeFuncEx()) {
+            std::lock_guard<std::mutex> lock(g_luaMutex);
             if (LuaConfig::CallManifestFetchCodeEx(appId, depotId, manifestGid, outRequestCode)) {
                 LOG_MANIFEST_INFO("Manifest gid={} resolved via fetch_manifest_code_ex", manifestGid);
                 return true;
@@ -135,6 +136,7 @@ namespace ManifestClient {
         }
 
         if (LuaConfig::HasManifestCodeFunc()) {
+            std::lock_guard<std::mutex> lock(g_luaMutex);
             if (LuaConfig::CallManifestFetchCode(manifestGid, outRequestCode)) {
                 LOG_MANIFEST_INFO("Manifest gid={} resolved via manifest.lua", manifestGid);
                 return true;
