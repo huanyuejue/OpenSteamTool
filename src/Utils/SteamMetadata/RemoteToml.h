@@ -16,7 +16,7 @@ namespace RemoteToml {
         std::string sha256;
     };
 
-    // Fetch remote TOML first, then fall back to the exact local cache entry.
+    // 优先复用以 SHA 命名的本地缓存，缺失时按序轮询全部远端镜像，全部失败才返回空
     Result Fetch(const Request& request);
 
 } // namespace RemoteToml

@@ -130,10 +130,12 @@ Result Fetch(const Request& request)
         }
     }
 
-    // 3. Cache miss -> try remote (mirror chain with early-out on 404).
+    // 3. Cache miss -> try remote (poll all mirrors in order).
+    // 逐个尝试全部镜像才判定失败：CDN 同步存在延迟，首个镜像 404 时后一个镜像可能已有文件
     const std::vector<std::string> urlTemplates = BuildUrlTemplates();
     OSTPlatform::Http::Result http;
     std::string lastUrl;
+    size_t notFoundCount = 0;
 
     for (size_t i = 0; i < urlTemplates.size(); ++i) {
         lastUrl = ExpandTemplate(urlTemplates[i], request, out.sha256);
@@ -143,15 +145,19 @@ Result Fetch(const Request& request)
         http = OSTPlatform::Http::Execute(L"GET", lastUrl.c_str(),
                                           nullptr, 0, nullptr);
 
-        if (http.ok && http.status == 200) break;
+        if (http.ok && http.status == 200 && !http.body.empty()) break;
 
-        if (http.ok && http.status == 404) {
-            LOG_WARN("RemoteToml({}/{}): mirror has no such file (HTTP 404): {}",
-                     request.channel, request.component, lastUrl);
-            break;   // all mirrors serve same data
-        }
-
-        if (i + 1 < urlTemplates.size()) {
+        const bool hasNext = (i + 1 < urlTemplates.size());
+        if (http.ok && http.status == 200) {
+            LOG_WARN("RemoteToml({}/{}): mirror returned empty body: {}{}",
+                     request.channel, request.component, lastUrl,
+                     hasNext ? ", trying next mirror" : "");
+        } else if (http.ok && http.status == 404) {
+            ++notFoundCount;
+            LOG_WARN("RemoteToml({}/{}): mirror has no such file (HTTP 404): {}{}",
+                     request.channel, request.component, lastUrl,
+                     hasNext ? ", trying next mirror" : "");
+        } else if (hasNext) {
             LOG_WARN("RemoteToml({}/{}): mirror failed ({} ok={} HTTP={}), falling back",
                      request.channel, request.component, lastUrl, http.ok, http.status);
         }
@@ -193,9 +199,16 @@ Result Fetch(const Request& request)
     }
 
     // 5. Total failure — caller handles popup / degraded mode.
-    LOG_WARN("RemoteToml({}/{}): no source available (last URL: {} HTTP {})",
-             request.channel, request.component,
-             lastUrl.empty() ? "<none>" : lastUrl, http.status);
+    // 区分全部 404 与网络故障：前者表示上游未发布，后者表示本机网络问题
+    if (!urlTemplates.empty() && notFoundCount == urlTemplates.size()) {
+        LOG_WARN("RemoteToml({}/{}): upstream has not published (all {} mirrors 404, last URL: {})",
+                 request.channel, request.component, urlTemplates.size(),
+                 lastUrl.empty() ? "<none>" : lastUrl);
+    } else {
+        LOG_WARN("RemoteToml({}/{}): no source available (last URL: {} HTTP {})",
+                 request.channel, request.component,
+                 lastUrl.empty() ? "<none>" : lastUrl, http.status);
+    }
     return out;
 }
 

@@ -196,19 +196,17 @@ El entorno de ejecución (runtime) en C++ proporciona dos funciones auxiliares d
 
 OpenSteamTool ya no incluye firmas de patrones de bytes (byte-pattern signatures) dentro de la DLL. En su lugar, en cada inicio calcula el hash SHA-256 de `steamclient64.dll` y `steamui.dll` en el disco, y busca un archivo de patrones coincidente desde el rastreador ascendente en ['OpenSteam001/steam-monitor'](https://github.com/OpenSteam001/steam-monitor) (extension `pattern`).
 
-Orden de búsqueda (en cada inicio):
+Orden de búsqueda (cuando no existe caché local para el SHA, es decir, primer inicio tras actualizar Steam):
 
-1.**jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/....` Fuente predeterminada.
-2.**GitHub raw** — alternativa automática si jsDelivr no está disponible (conexión rechazada / tiempo de espera / error 5xx). No requiere configuración. Configura `[remote] order = "github-first"` para volver al orden anterior (GitHub primero).
-3.**Caché local** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. Se utiliza **únicamente** cuando el servidor remoto no está disponible. La caché se sobrescribe tras cada consulta remota exitosa.
+1.**Caché local** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. Si hay acierto se usa directamente sin contactar remotos. La caché se sobrescribe tras cada consulta remota exitosa.
+2.**jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/....` Fuente predeterminada.
+3.**GitHub raw** — alternativa automática cuando el espejo anterior devuelve 404 / conexión rechazada / tiempo de espera / error 5xx. No requiere configuración. Configura `[remote] order = "github-first"` para volver al orden anterior (GitHub primero).
 
-Se consulta al servidor remoto en cada inicio para que los usuarios obtengan automáticamente las nuevas publicaciones del proyecto principal (por ejemplo, si el bot añade una nueva firma o corrige una existente) sin tener que limpiar ninguna caché.
+Solo cuando todos los espejos devuelven **HTTP 404** se considera que el bot ascendente aún no ha publicado un archivo TOML para esa compilación de Steam. Sin caché local, aparecerá una ventana emergente por única vez mostrando el nombre de la DLL no emparejada, su SHA-256, la ruta de caché esperada y la URL de origen. Solo se desactivarán los ganchos (hooks) vinculados a esa DLL; el resto de OpenSteamTool seguirá funcionando.
 
-Si un paso devuelve un error **HTTP 404**, el bucle de espejos (mirrors) se detiene inmediatamente —todos los espejos sirven el mismo contenido, por lo que un 404 significa que el bot ascendente aún no ha publicado un archivo TOML para esa compilación específica de Steam—. En ese caso, el código recurre a la caché local si existe; de lo contrario, aparecerá una ventana emergente por única vez mostrando el nombre de la DLL no emparejada, su SHA-256, la ruta de caché esperada y la URL de origen. Solo se desactivarán los ganchos (hooks) vinculados a esa DLL; el resto de OpenSteamTool seguirá funcionando.
+También puedes colocar manualmente un archivo TOML de patrones en el directorio de la caché si conoces la estructura para una compilación determinada; el nombre del archivo debe ser `<sha256>.toml`. Se usará directamente en el próximo inicio por acierto de caché.
 
-También puedes colocar manualmente un archivo TOML de patrones en el directorio de la caché si conoces la estructura para una compilación determinada; el nombre del archivo debe ser `<sha256>.toml`. La caché de reserva lo detectará la próxima vez que el servidor remoto sea inaccesible.
-
-> Se realiza una breve solicitud HTTPS saliente en cada inicio (una por cada DLL: `steamclient64.dll`, `steamui.dll`). Los cuerpos descargados son diminutos (~10 KB cada uno) y el proceso se ejecuta en un hilo secundario (worker thread), por lo que nunca bloquea el cargador de Steam.
+> Se realiza una breve solicitud HTTPS saliente cuando la caché local falla (una por cada DLL: `steamclient64.dll`, `steamui.dll`). Los cuerpos descargados son diminutos (~10 KB cada uno) y el proceso se ejecuta en un hilo secundario (worker thread), por lo que nunca bloquea el cargador de Steam.
 
 #### Uso de un espejo (mirror) diferente
 

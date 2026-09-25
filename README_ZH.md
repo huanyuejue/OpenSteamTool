@@ -204,19 +204,17 @@ C++ 运行时提供两个 Lua 辅助函数：
 
 OpenSteamTool 不再在 DLL 中内置字节模式签名。相反，每次启动时它计算磁盘上 `steamclient64.dll` 和 `steamui.dll` 的 SHA-256，并从上游跟踪器 [`OpenSteam001/steam-monitor`](https://github.com/OpenSteam001/steam-monitor)（`pattern` 分支）查找匹配的模式文件
 
-查找顺序（每次启动）：
+查找顺序（本地无对应 SHA 缓存时，即 Steam 更新后首次启动）：
 
-1. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`。默认来源
-2. **GitHub raw** — 如果 jsDelivr 无法访问（连接拒绝/超时/5xx）时自动回退。无需配置。配置 `[remote] order = "github-first"` 可恢复之前的 GitHub 优先顺序
-3. **本地缓存** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`。仅当远程不可达时使用。每次成功远程获取后覆盖缓存
+1. **本地缓存** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`。命中直接使用，不再请求远端。每次成功远程获取后覆盖缓存
+2. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`。默认来源
+3. **GitHub raw** — 当前一个镜像返回 404 / 连接失败 / 超时 / 5xx 时自动尝试下一个。无需配置。配置 `[remote] order = "github-first"` 可恢复之前的 GitHub 优先顺序
 
-每次启动都会咨询远程，因此用户自动获取上游重新发布（例如机器人添加新签名或修复现有签名），无需清除任何缓存
+只有全部镜像都返回 **HTTP 404**，才判定上游机器人尚未为此 Steam 版本发布 TOML。此时若无本地缓存，会出现一次性弹窗，显示不匹配的 DLL 名称、其 SHA-256、预期缓存路径和上游 URL。仅禁用与该 DLL 相关的钩子——OpenSteamTool 的其余部分继续工作
 
-如果某步返回 **HTTP 404**，镜像循环立即停止——所有镜像提供相同内容，因此 404 意味着上游机器人尚未为此 Steam 版本发布 TOML。代码然后回退到本地缓存（如果存在）；否则出现一次性弹窗，显示不匹配的 DLL 名称、其 SHA-256、预期缓存路径和上游 URL。仅禁用与该 DLL 相关的钩子——OpenSteamTool 的其余部分继续工作
+如果你知道给定版本的布局，也可以手动将模式 TOML 放入缓存目录；文件名必须为 `<sha256>.toml`。下次启动命中缓存直接使用
 
-如果你知道给定版本的布局，也可以手动将模式 TOML 放入缓存目录；文件名必须为 `<sha256>.toml`。下次远程不可达时缓存回退会拾取它
-
-> 每次启动执行简短的出站 HTTPS 请求（每个 DLL 一个：`steamclient64.dll`、`steamui.dll`）。下载的内容很小（每个约 10 KB），工作在线程上运行，因此永远不会阻塞 Steam 加载器
+> 本地无缓存时每次启动执行简短的出站 HTTPS 请求（每个 DLL 一个：`steamclient64.dll`、`steamui.dll`）。下载的内容很小（每个约 10 KB），工作在线程上运行，因此永远不会阻塞 Steam 加载器
 
 #### 使用不同的镜像
 

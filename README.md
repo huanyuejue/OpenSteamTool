@@ -210,19 +210,17 @@ The C++ runtime provides two Lua helpers:
 
 OpenSteamTool no longer ships byte-pattern signatures inside the DLL. Instead, on each launch it computes the SHA-256 of `steamclient64.dll` and `steamui.dll` on disk and looks up a matching pattern file from the upstream tracker at [`OpenSteam001/steam-monitor`](https://github.com/OpenSteam001/steam-monitor) (`pattern` branch).
 
-Lookup order (every launch):
+Lookup order (when no cached file exists for the SHA, i.e. first launch after a Steam update):
 
-1. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`. Default source.
-2. **GitHub raw** — automatic fallback if jsDelivr is unreachable (connection refused / timeout / 5xx). No configuration required. Set `[remote] order = "github-first"` to restore the previous GitHub-first order.
-3. **Local cache** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. Used **only** when remote is unreachable. The cache is overwritten after every successful remote fetch.
+1. **Local cache** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. A cache hit is used directly without contacting remotes. The cache is overwritten after every successful remote fetch.
+2. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`. Default source.
+3. **GitHub raw** — automatic fallback when the previous mirror returns 404 / connection refused / timeout / 5xx. No configuration required. Set `[remote] order = "github-first"` to restore the previous GitHub-first order.
 
-Remote is consulted on every launch so users automatically pick up upstream re-publications (e.g. the bot adding a new signature, or fixing an existing one) without having to clear any cache.
+Only when all mirrors return **HTTP 404** is the upstream bot considered to have not yet published a TOML for this Steam build. Without a local cache, a one-shot popup appears with the unmatched DLL name, its SHA-256, the expected cache path, and the upstream URL. Only the hooks tied to that DLL are disabled — the rest of OpenSteamTool keeps working.
 
-If a step returns **HTTP 404** the mirror loop stops immediately — all mirrors serve the same content, so a 404 means the upstream bot has not yet published a TOML for this Steam build. The code then falls back to the local cache if one exists; otherwise a one-shot popup appears with the unmatched DLL name, its SHA-256, the expected cache path, and the upstream URL. Only the hooks tied to that DLL are disabled — the rest of OpenSteamTool keeps working.
+You can also drop a pattern TOML into the cache directory manually if you know the layout for a given build; the file name must be `<sha256>.toml`. It is used directly on the next launch via the cache hit path.
 
-You can also drop a pattern TOML into the cache directory manually if you know the layout for a given build; the file name must be `<sha256>.toml`. The cache fallback will pick it up the next time remote is unreachable.
-
-> A short outbound HTTPS request is performed at every launch (one per DLL: `steamclient64.dll`, `steamui.dll`). The downloaded bodies are tiny (~10 KB each) and the work runs on a worker thread, so it never blocks Steam's loader.
+> A short outbound HTTPS request is performed when the local cache misses (one per DLL: `steamclient64.dll`, `steamui.dll`). The downloaded bodies are tiny (~10 KB each) and the work runs on a worker thread, so it never blocks Steam's loader.
 
 #### Using a different mirror
 
