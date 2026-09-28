@@ -9,9 +9,9 @@ level = "debug"
 
 [manifest]
 # Which upstream API to query for depot manifest request codes.
-#   "20770407"      → https://20770407.xyz/manifest/{depotId}/{gid}
+#   "20770407"      → https://20770407.xyz/manifest/{depotId}/{gid} (default)
 #   "opensteamtool" → https://manifest.opensteamtool.com/{gid}
-#   "wudrm"         → http://gmrc.wudrm.com/manifest/{gid} (recommended for China users, default)
+#   "wudrm"         → http://gmrc.wudrm.com/manifest/{gid} (recommended for China users)
 #   "steamrun"      → https://manifest.steam.run/api/manifest/{gid}
 #   "manifestdex"   → https://manifest.manifestdex.com/{gid} (requires User-Agent: ManifestDeX/1.0, sent automatically)
 #   "SDM"           → https://steamapi.993499094.xyz/manifest/{depotId}/{gid}
@@ -47,7 +47,7 @@ level = "debug"
 #     end
 #     return nil
 # end
-url = "wudrm"
+url = "20770407"
 
 # HTTP timeouts for manifest requests (milliseconds).
 # timeout_resolve_ms  — DNS resolution        (default: 5000)

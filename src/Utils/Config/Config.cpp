@@ -12,7 +12,7 @@ namespace Config {
 namespace {
 
     struct Snapshot {
-        std::string manifestProvider = "wudrm";
+        std::string manifestProvider = "20770407";
         ManifestTimeouts manifestTimeouts;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
@@ -75,7 +75,7 @@ namespace {
     void ApplyManifestProvider(const std::string& provider) {
         if (!ManifestClient::SetProvider(provider)) {
             LOG_WARN("Unknown manifest.url \"{}\", keeping default", provider);
-            ManifestClient::SetProvider("wudrm");
+            ManifestClient::SetProvider("20770407");
         }
     }
 

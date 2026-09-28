@@ -54,8 +54,8 @@ namespace ManifestClient {
     }
 
     static constexpr Provider kProviders[] = {
-        Make("wudrm",         "http://gmrc.wudrm.com/manifest/%llu",     ParsePlainUint),
         Make("20770407",    "https://20770407.xyz/manifest/%llu/%llu",   ParsePlainUint, true),
+        Make("wudrm",         "http://gmrc.wudrm.com/manifest/%llu",     ParsePlainUint),
         Make("opensteamtool", "https://manifest.opensteamtool.com/%llu", ParsePlainUint),
         Make("steamrun",      "https://manifest.steam.run/api/manifest/%llu", ParseSteamRunJson),
         Make("manifestdex",   "https://manifest.manifestdex.com/%llu",   ParsePlainUint, false,
@@ -63,7 +63,7 @@ namespace ManifestClient {
         Make("SDM",           "https://steamapi.993499094.xyz/manifest/%llu/%llu", ParsePlainUint, true),
     };
 
-    static std::atomic<const Provider*> g_active{&kProviders[0]};   // wudrm
+    static std::atomic<const Provider*> g_active{&kProviders[0]};   // 20770407
     // Lua 取码函数共用全局 Lua 状态，串行调用；HTTP 请求无锁并发执行
     static std::mutex g_luaMutex;
 
