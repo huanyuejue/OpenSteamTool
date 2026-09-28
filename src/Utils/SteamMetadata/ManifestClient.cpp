@@ -60,6 +60,7 @@ namespace ManifestClient {
         Make("steamrun",      "https://manifest.steam.run/api/manifest/%llu", ParseSteamRunJson),
         Make("manifestdex",   "https://manifest.manifestdex.com/%llu",   ParsePlainUint, false,
              L"User-Agent: ManifestDeX/1.0"),
+        Make("SDM",           "https://steamapi.993499094.xyz/manifest/%llu/%llu", ParsePlainUint, true),
     };
 
     static std::atomic<const Provider*> g_active{&kProviders[0]};   // wudrm

@@ -14,6 +14,7 @@ level = "debug"
 #   "wudrm"         → http://gmrc.wudrm.com/manifest/{gid} (recommended for China users, default)
 #   "steamrun"      → https://manifest.steam.run/api/manifest/{gid}
 #   "manifestdex"   → https://manifest.manifestdex.com/{gid} (requires User-Agent: ManifestDeX/1.0, sent automatically)
+#   "SDM"           → https://steamapi.993499094.xyz/manifest/{depotId}/{gid}
 # If <Steam>/config/lua/manifest.lua defines fetch_manifest_code(gid) or
 # fetch_manifest_code_ex(app_id, depot_id, gid), those Lua functions take
 # priority over the url setting below.
