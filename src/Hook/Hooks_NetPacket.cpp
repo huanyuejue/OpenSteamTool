@@ -512,16 +512,17 @@ namespace Hooks_NetPacket_FamilySharing {
 //  Outgoing: ContentServerDirectory.GetManifestRequestCode#1  (eMsg 151)
 //  Incoming: ContentServerDirectory.GetManifestRequestCode#1  (eMsg 147)
 //
-//  Launches an async HTTP fetch on send; the recv handler waits up to
-//  12 s for the result and patches both header (eresult=OK) and body
-//  (manifest_request_code).  On timeout or failure the original
-//  response passes through unmodified.
+//  Launches an async HTTP fetch on send; the recv handler waits past
+//  the fetch budget (budget + 1 s) for the result and patches both
+//  header (eresult=OK) and body (manifest_request_code).  On timeout
+//  or failure the original response passes through unmodified.
 // ════════════════════════════════════════════════════════════════
 namespace Hooks_NetPacket_Manifest {
 
     std::unordered_map<uint64, std::shared_future<uint64>> g_CodeFutures;
     std::mutex g_CodeMutex;
-    constexpr uint32 kMaxWaitSeconds = 12;
+    // 等待时长为取码预算加 1 秒，带回退的慢应答仍能生效。
+    constexpr uint32 kMaxWaitMs = ManifestClient::kFetchBudgetMs + 1000;
 
     bool HandleSend(const uint8* pBody, uint32 cbBody,
                     const uint8* pHdr, uint32 cbHdr)
@@ -582,8 +583,8 @@ namespace Hooks_NetPacket_Manifest {
             future = it->second;
             g_CodeFutures.erase(it); // Always clean up immediately
         }
-        // Wait up to kMaxWaitSeconds seconds for the HTTP fetch to complete
-        auto status = future.wait_for(std::chrono::seconds(kMaxWaitSeconds));
+        // 等待上限覆盖取码预算，带回退的慢应答仍能生效
+        auto status = future.wait_for(std::chrono::milliseconds(kMaxWaitMs));
         if (status != std::future_status::ready) {
             LOG_MANIFEST_WARN("GetManifestRequestCode recv: HTTP timed out for jobid={}", jobId);
             return;

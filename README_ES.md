@@ -37,7 +37,7 @@
 - Desbloquea una cantidad ilimitada de juegos que no poseas.
 - Desbloquea todos los DLC para juegos que no poseas.
 - Soporta la carga automática de claves de descifrado de depósitos(depots) desde la configuración de Lua.
-- Soporta la descarga automática de manifiestos a través de las APIs ascendentes (upstream APIs) de `20770407` / `opensteamtool` / `steamrun` / `wudrm` / `SDM` (por defecto es 20770407), o mediante un endpoint personalizado de Lua (ver [Manifest a traves de Lua](#manifest-via-lua)).
+- Soporta la descarga automática de manifiestos a través de las APIs ascendentes (upstream APIs) de `20770407` / `opensteamtool` / `steamrun` / `wudrm` / `SDM` (por defecto es 20770407, con failover automático al siguiente upstream en caso de fallo, configurable con `failover`), o mediante un endpoint personalizado de Lua (ver [Manifest a traves de Lua](#manifest-via-lua)).
 - Soporta la descarga de juegos protegidos o DLCs que requieran un token de acceso.
 - Soporta la vinculación de manifiestos para evitar que juegos específicos se actualicen.
 
@@ -137,9 +137,15 @@ level = "info"
 
 [manifest]
 # API ascendente para los códigos de solicitud de manifiestos de depósito. Opciones: "20770407", "opensteamtool", "steamrun", "wudrm", "SDM"
+# url solo elige el primer upstream. Con failover activado, si falla se prueban
+# los demás en orden; un upstream fallido se omite durante 60 s. La url
+# configurada sigue siendo la primera opción.
 url = "20770407"
+# Conmutador de failover entre upstreams (recarga en caliente). false consulta solo la url anterior.
+failover = true
 
-# Tiempos de espera HTTP (timeouts) para las solicitudes de manifiestos (en milisegundos)
+# Tiempos de espera HTTP (timeouts) para las solicitudes de manifiestos (en milisegundos), cada uno en [1, 15000].
+# Una obtención (todos los reintentos incluidos) comparte el presupuesto de 15000 ms.
 timeout_resolve_ms = 5000
 timeout_connect_ms = 5000
 timeout_send_ms    = 10000

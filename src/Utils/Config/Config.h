@@ -52,6 +52,8 @@ namespace Config {
     inline uint32_t manifestTimeoutConnect = 5000;
     inline uint32_t manifestTimeoutSend    = 10000;
     inline uint32_t manifestTimeoutRecv    = 10000;
+    // 顺位回退开关：关闭时仅请求首选源。
+    inline bool manifestFailover = true;
 
     // [log]
     inline LogLevel logLevel = LogLevel::Debug;

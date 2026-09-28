@@ -42,7 +42,7 @@
 - 解锁任意数量未拥有的游戏
 - 解锁未拥有游戏的所有 DLC
 - 支持从 Lua 配置自动加载仓库（depot）解密密钥
-- 支持通过 `20770407` / `opensteamtool` / `steamrun` / `wudrm` / `SDM` 上游 API 自动下载 manifest（默认为 `20770407`），或通过自定义 Lua 端点（参见 [通过 Lua 获取 Manifest](#通过-lua-获取-manifest)）
+- 支持通过 `20770407` / `opensteamtool` / `steamrun` / `wudrm` / `SDM` 上游 API 自动下载 manifest（默认为 `20770407`，失败自动顺位尝试下一个，可用 `failover` 开关控制），或通过自定义 Lua 端点（参见 [通过 Lua 获取 Manifest](#通过-lua-获取-manifest)）
 - 支持下载需要访问令牌的保护游戏或 DLC
 - 支持绑定 manifest 以防止特定游戏被更新
 
@@ -144,9 +144,14 @@ level = "info"
 
 [manifest]
 # 仓库 manifest 请求码的上游 API。选项："20770407"、"opensteamtool"、"steamrun"、"wudrm"、"SDM"
+# url 只决定优先尝试的上游；开启 failover 后首选失败会自动顺位尝试其余上游，
+# 刚失败的上游 60 秒内跳过；配置的 url 始终是下次取码的首选。
 url = "20770407"
+# 上游顺位回退开关（热加载生效）。false 表示只请求上面配置的 url。
+failover = true
 
-# manifest 请求的 HTTP 超时（毫秒）
+# manifest 请求的 HTTP 超时（毫秒），每项取值范围 [1, 15000]。
+# 单次取码（含全部回退）整体共享 15000 毫秒预算。
 timeout_resolve_ms = 5000
 timeout_connect_ms = 5000
 timeout_send_ms    = 10000

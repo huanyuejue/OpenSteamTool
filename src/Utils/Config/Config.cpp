@@ -4,6 +4,7 @@
 
 #include <toml++/toml.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <mutex>
@@ -13,6 +14,7 @@ namespace {
 
     struct Snapshot {
         std::string manifestProvider = "20770407";
+        bool manifestFailover = true;
         ManifestTimeouts manifestTimeouts;
         LogLevel logLevel = LogLevel::Debug;
         std::string logDir;
@@ -58,6 +60,7 @@ namespace {
         manifestTimeoutConnect = snapshot.manifestTimeouts.connect;
         manifestTimeoutSend    = snapshot.manifestTimeouts.send;
         manifestTimeoutRecv    = snapshot.manifestTimeouts.recv;
+        manifestFailover       = snapshot.manifestFailover;
         logLevel               = snapshot.logLevel;
         logDir                 = snapshot.logDir;
         luaPaths               = snapshot.luaPaths;
@@ -79,6 +82,20 @@ namespace {
         }
     }
 
+    // WinHTTP 把零超时读成无限等待，负数经转换会回绕成极大值；
+    // 两种取值都会让单次尝试跑穿取码预算，因此在入口处钳制并告警。
+    void ReadTimeoutMs(const toml::table& manifest, const char* key, uint32_t& out) {
+        const auto val = manifest[key].value<int64_t>();
+        if (!val) return;
+
+        constexpr int64_t kMin = 1;
+        constexpr int64_t kMax = ManifestClient::kFetchBudgetMs;
+        if (*val < kMin || *val > kMax) {
+            LOG_WARN("manifest.{} = {} is outside [{}, {}], clamping", key, *val, kMin, kMax);
+        }
+        out = static_cast<uint32_t>(std::clamp<int64_t>(*val, kMin, kMax));
+    }
+
     LoadResult ApplySnapshotLocked(const Snapshot& snapshot) {
         std::lock_guard lock(g_mutex);
         LoadResult result;
@@ -96,9 +113,11 @@ namespace {
         if (!std::filesystem::exists(configPath)) {
             LOG_INFO("Config file not found, using defaults");
             ApplyManifestProvider(snapshot.manifestProvider);
+            ManifestClient::SetFailoverEnabled(snapshot.manifestFailover);
             LoadResult result = ApplySnapshotLocked(snapshot);
-            LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={} remote.order={}",
+            LOG_INFO("Config loaded: manifest.url={} manifest.failover={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={} remote.order={}",
                      ManifestClient::ActiveProviderName(),
+                     ManifestClient::IsFailoverEnabled(),
                      ToString(GetLogLevel()),
                      (uint32_t)GetLuaPaths().size(),
                      GetStatsEnableApi(),
@@ -115,14 +134,13 @@ namespace {
                 if (auto val = (*manifest)["url"].value<std::string>()) {
                     snapshot.manifestProvider = *val;
                 }
-                if (auto val = (*manifest)["timeout_resolve_ms"].value<int64_t>())
-                    snapshot.manifestTimeouts.resolve = static_cast<uint32_t>(*val);
-                if (auto val = (*manifest)["timeout_connect_ms"].value<int64_t>())
-                    snapshot.manifestTimeouts.connect = static_cast<uint32_t>(*val);
-                if (auto val = (*manifest)["timeout_send_ms"].value<int64_t>())
-                    snapshot.manifestTimeouts.send = static_cast<uint32_t>(*val);
-                if (auto val = (*manifest)["timeout_recv_ms"].value<int64_t>())
-                    snapshot.manifestTimeouts.recv = static_cast<uint32_t>(*val);
+                if (auto val = (*manifest)["failover"].value<bool>()) {
+                    snapshot.manifestFailover = *val;
+                }
+                ReadTimeoutMs(*manifest, "timeout_resolve_ms", snapshot.manifestTimeouts.resolve);
+                ReadTimeoutMs(*manifest, "timeout_connect_ms", snapshot.manifestTimeouts.connect);
+                ReadTimeoutMs(*manifest, "timeout_send_ms", snapshot.manifestTimeouts.send);
+                ReadTimeoutMs(*manifest, "timeout_recv_ms", snapshot.manifestTimeouts.recv);
             }
 
             // [log]
@@ -195,9 +213,11 @@ namespace {
             }
 
             ApplyManifestProvider(snapshot.manifestProvider);
+            ManifestClient::SetFailoverEnabled(snapshot.manifestFailover);
             LoadResult result = ApplySnapshotLocked(snapshot);
-            LOG_INFO("Config loaded: manifest.url={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={} remote.order={}",
+            LOG_INFO("Config loaded: manifest.url={} manifest.failover={} log.level={} lua.paths={} stats.enable_api={} remote.url_template={} remote.order={}",
                      ManifestClient::ActiveProviderName(),
+                     ManifestClient::IsFailoverEnabled(),
                      ToString(snapshot.logLevel),
                      (uint32_t)snapshot.luaPaths.size(),
                      snapshot.statsEnableApi,
@@ -217,6 +237,7 @@ namespace {
         }
         if (shouldApplyDefault) {
             ApplyManifestProvider(snapshot.manifestProvider);
+            ManifestClient::SetFailoverEnabled(snapshot.manifestFailover);
             std::lock_guard lock(g_mutex);
             const bool luaChanged = luaPaths != snapshot.luaPaths;
             ApplySnapshot(snapshot);

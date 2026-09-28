@@ -10,14 +10,26 @@ level = "debug"
 [manifest]
 # Which upstream API to query for depot manifest request codes.
 #   "20770407"      → https://20770407.xyz/manifest/{depotId}/{gid} (default)
-#   "opensteamtool" → https://manifest.opensteamtool.com/{gid}
+#   "SDM"           → https://steamapi.993499094.xyz/manifest/{depotId}/{gid}
+#   "manifestdex"   → https://manifest.manifestdex.com/{gid} (requires User-Agent: ManifestDeX/1.0, sent automatically)
 #   "wudrm"         → http://gmrc.wudrm.com/manifest/{gid} (recommended for China users)
 #   "steamrun"      → https://manifest.steam.run/api/manifest/{gid}
-#   "manifestdex"   → https://manifest.manifestdex.com/{gid} (requires User-Agent: ManifestDeX/1.0, sent automatically)
-#   "SDM"           → https://steamapi.993499094.xyz/manifest/{depotId}/{gid}
+#   "opensteamtool" → https://manifest.opensteamtool.com/{gid}
 # If <Steam>/config/lua/manifest.lua defines fetch_manifest_code(gid) or
 # fetch_manifest_code_ex(app_id, depot_id, gid), those Lua functions take
 # priority over the url setting below.
+#
+# url only selects the first upstream to try. When failover is enabled and
+# that upstream fails, the remaining upstreams are tried in table order;
+# the configured url stays the first choice for the next fetch.
+# An upstream that just failed is skipped for 60 s. The preferred
+# upstream keeps its position regardless of failover results.
+url = "20770407"
+
+# Failover across manifest upstreams. true (default) tries the next
+# upstream when the preferred one fails; false only queries url above.
+# Hot-reloaded, no restart required.
+failover = true
 #
 # --- manifest.lua reference ---
 # The C++ side provides http_get(url [, headers]) and
@@ -50,6 +62,10 @@ level = "debug"
 url = "20770407"
 
 # HTTP timeouts for manifest requests (milliseconds).
+# Each value must be within [1, 15000] (the whole-fetch budget);
+# values outside that range are clamped with a warning in the log.
+# One fetch tries several upstreams in turn and all attempts share
+# the 15000 ms budget.
 # timeout_resolve_ms  — DNS resolution        (default: 5000)
 # timeout_connect_ms  — TCP handshake          (default: 5000)
 # timeout_send_ms     — request transmission   (default: 10000)
