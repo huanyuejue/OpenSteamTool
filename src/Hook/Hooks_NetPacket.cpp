@@ -992,6 +992,10 @@ namespace Hooks_NetPacket_OnlineFix {
         const bool broadcast = Hooks_NetPacket_RichPresence::BroadcastEnabled();
 
         bool patched = false;
+        // 采用独立标记跟踪广播重写状态，与防锁库的 owner 掩码解耦，
+        // 避免带 owner 上报时跳过广播重写导致好友侧无状态。
+        bool didBroadcastRewrite = false;
+        int rewrittenIndex = -1;
         for (int i = 0; i < msg.games_played_size(); ++i) {
             auto* game = msg.mutable_games_played(i);
             AppId_t appid = static_cast<AppId_t>(game->game_id() & UINT32_MAX);
@@ -1005,27 +1009,21 @@ namespace Hooks_NetPacket_OnlineFix {
                     if (!name.empty()) {
                         game->set_game_extra_info(name);
                         patched = true;
+                        didBroadcastRewrite = true;
+                        rewrittenIndex = i;
                         LOG_ONLINEFIX_INFO("OnlineFix: 480 -> name '{}' (real appid {})",
                             name, realAppId);
                     }
                 }
-            }
-
-            // 家庭共享并发保护：抹掉出借方 owner_id，服务器不再锁出借方的库
-            if (game->has_owner_id() && game->owner_id() != 0 && game->owner_id() != 1) {
-                LOG_NETPACKET_INFO("FamilySharing: Masking owner_id {} -> 1 for game_id {}",
-                                   game->owner_id(), game->game_id());
-                game->set_owner_id(1);
-                patched = true;
             }
         }
 
         // Rich Presence: rewrite topmost unowned game to use the first
         // available shortcut's game_id so the server broadcasts it as a
         // non-Steam game. Falls back to 480 if no shortcuts registered.
-        if (broadcast && !patched) {
+        if (broadcast && !didBroadcastRewrite) {
             AppId_t trackedId = Hooks_NetPacket_RichPresence::g_PlayingAppId;
-            if (trackedId != 0 && trackedId != kOnlineFixAppId) {
+            if (trackedId != 0 && trackedId != kOnlineFixAppId && msg.games_played_size() > 0) {
                 std::string name = Hooks_Misc::GetGameNameByAppID(trackedId);
                 if (!name.empty()) {
                     auto* topGame = msg.mutable_games_played(msg.games_played_size() - 1);
@@ -1036,9 +1034,27 @@ namespace Hooks_NetPacket_OnlineFix {
                         topGame->set_game_id(kOnlineFixAppId);
                     }
                     topGame->set_game_extra_info(name);
+                    // 重写后的栈顶直接清空 owner，模拟非 Steam 游戏上报形态，
+                    // 兼顾服务器广播与出借方库免锁定。
+                    topGame->clear_owner_id();
                     patched = true;
+                    didBroadcastRewrite = true;
+                    rewrittenIndex = msg.games_played_size() - 1;
                     LOG_ONLINEFIX_INFO("RichPresence: appid {} -> name '{}'", trackedId, name);
                 }
+            }
+        }
+
+        // 家庭共享并发保护：抹掉出借方 owner_id，服务器不再锁出借方的库。
+        // 广播重写过的条目跳过掩码，其 owner 已在重写时清空。
+        for (int i = 0; i < msg.games_played_size(); ++i) {
+            if (i == rewrittenIndex) continue;
+            auto* game = msg.mutable_games_played(i);
+            if (game->has_owner_id() && game->owner_id() != 0 && game->owner_id() != 1) {
+                LOG_NETPACKET_INFO("FamilySharing: Masking owner_id {} -> 1 for game_id {}",
+                                   game->owner_id(), game->game_id());
+                game->set_owner_id(1);
+                patched = true;
             }
         }
         if (!patched) return false;
