@@ -1,4 +1,4 @@
-> **Fork note:** This is an optimized fork of [OpenSteam001/OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool), maintained for use with [huanyuejue/Fluent-Steam-Lua](https://github.com/huanyuejue/Fluent-Steam-Lua), a Steam library management tool.
+> **Fork 说明：** 本项目是 [OpenSteam001/OpenSteamTool](https://github.com/OpenSteam001/OpenSteamTool) 的优化分支，为适配 Steam 入库工具 [huanyuejue/Fluent-Steam-Lua](https://github.com/huanyuejue/Fluent-Steam-Lua) 而开发。
 
 <div align="center">
   <img src="docs/logo-animated.svg" width="180" alt="OpenSteamTool logo">
@@ -6,20 +6,20 @@
   <h1>OpenSteamTool</h1>
 
   <p>
-    <strong>Open-Source Steam Unlock Tool</strong>
+    <strong>开源 Steam 解锁工具</strong>
   </p>
 
   <p>
     <img src="https://img.shields.io/badge/C%2B%2B-20%2B-2ea44f?logo=cplusplus&logoColor=white" alt="C++ 20+">
     <img src="https://img.shields.io/badge/CMake-3.20%2B-2ea44f?logo=cmake&logoColor=white" alt="CMake 3.20+">
-    <img src="https://img.shields.io/badge/Windows-only-d73a49?logo=windows&logoColor=white" alt="Windows only">
+    <img src="https://img.shields.io/badge/Windows-only-d73a49?logo=windows&logoColor=white" alt="仅 Windows">
     <a href="https://deepwiki.com/OpenSteam001/OpenSteamTool">
       <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
     </a>
   </p>
 
   <p>
-    <a href="README.md">
+    <a href="README_EN.md">
       <img src="https://flagcdn.com/w40/us.png" width="22" alt="United States flag">
       English
     </a>
@@ -29,261 +29,254 @@
       Español
     </a>
     &nbsp;|&nbsp;
-    <a href="README_ZH.md">
+    <a href="README.md">
       <img src="https://flagcdn.com/w40/cn.png" width="22" alt="China flag">
       中文
     </a>
   </p>
 </div>
 
-## Feature
+## 功能特性
 
-### Core Unlocks
-- Unlock an unlimited number of unowned games.
-- Unlock all DLCs for unowned games.
-- Support auto load depot decryption keys from Lua config.
-- Support auto manifest download via `20770407` / `opensteamtool` / `steamrun` / `wudrm` / `SDM` upstream APIs (default is `20770407`, automatic failover to the next upstream on failure, toggleable via `failover`), or a custom Lua endpoint (see [Manifest via Lua](#manifest-via-lua)).
-- Support downloading protected games or DLCs that require an access token.
-- Support binding manifest to prevent specific games from being updated.
+### 核心解锁
+- 解锁任意数量未拥有的游戏
+- 解锁未拥有游戏的所有 DLC
+- 支持从 Lua 配置自动加载仓库（depot）解密密钥
+- 支持通过 `20770407` / `opensteamtool` / `steamrun` / `wudrm` / `SDM` 上游 API 自动下载 manifest（默认为 `20770407`，失败自动顺位尝试下一个，可用 `failover` 开关控制），或通过自定义 Lua 端点（参见 [通过 Lua 获取 Manifest](#通过-lua-获取-manifest)）
+- 支持下载需要访问令牌的保护游戏或 DLC
+- 支持绑定 manifest 以防止特定游戏被更新
 
-### Hot Reload
-- Adding, modifying, deleting, or overwriting `.lua` files in any watched directory automatically triggers a reload. No restart, no offline/online toggle needed.
+### 热重载
+- 在任何监视目录中添加、修改、删除或覆盖 `.lua` 文件会自动触发重载。无需重启，无需切换离线/在线模式
 
-### Injection
-- Add optional game-process library injection through `[inject]` in `opensteamtool.toml`.
-- Configure `enabled`, `library_x64`, and `library_x86`; the injected library must match the target process architecture.`library_x64` and `library_x86` may be absolute paths, or relative paths resolved from the Steam root directory.
+### 注入
+- 通过 `opensteamtool.toml` 中的 `[inject]` 添加可选的游戏进程库注入
+- 配置 `enabled`、`library_x64` 和 `library_x86`；注入的库必须与目标进程架构匹配。路径可以是绝对路径，也可以是相对于 Steam 根目录的相对路径
 
-### Family Sharing and Remote Play
-- Bypass Steam Family Sharing restrictions with zero configuration: the lender's library is never locked and borrowed games lose their borrowed/license-locked flags.
+### 家庭共享和远程同乐
+- 零配置绕过 Steam 家庭共享限制：出借方库不被锁定，借用游戏去掉借用与锁定标记
 
-### Compatible with games protected by Denuvo and SteamStub
-- SteamStub-only games do not require configuring `AppTicket`. OpenSteamTool can reuse Steam's local ConfigStore ticket and forge the requested AppId through a SteamDRMP off-by-four ticket parsing vulnerability, without injecting into the game process.
+### 兼容 Denuvo 和 SteamStub 保护的游戏
+- 仅 SteamStub 保护的游戏不需要配置 `AppTicket`。OpenSteamTool 可以重用 Steam 本地 ConfigStore 令牌，通过 SteamDRMP 令牌解析漏洞伪造请求的 AppId，无需注入游戏进程
+- Denuvo 保护的游戏仍需要显式令牌数据。OpenSteamTool 通过平台凭据存储保存 `AppTicket` 和 `ETicket`
+- 在 Lua 配置中使用 `setAppTicket(appid, "hex")` 和 `setETicket(appid, "hex")` 自动将这些值写入平台凭据存储
+- Denuvo 验证有 30 分钟有效窗口。过期后授权可能失败，显示 Denuvo 错误代码 `88500005`；重试前请刷新令牌数据
+- AppTicket 优先级：显式令牌优先级最高，包括通过 `setAppTicket` 配置的令牌和已缓存的 `AppTicket` 凭据值。若无可用显式 AppTicket，OpenSteamTool 回退到伪造的本地 ConfigStore 令牌路径
+- SteamID 优先级：优先读取缓存的 `SteamID`；若缺失，则从显式 `AppTicket` 解析。在 Windows 上，凭据存储后端当前使用 `HKCU\Software\Valve\Steam\Apps\<AppId>`。Linux 后端尚未实现
 
-### Third-party product keys ("Updating product key")
-- For titles that carry a Steam-issued third-party retail key (Ubisoft Connect, Rockstar, etc.), OpenSteamTool answers the client's legacy key request locally, so the "Updating product key" step completes for added games instead of failing. Supply a real key with `setlegacycdkey(appid, "KEY")`; when none is configured a deterministic synthetic key is generated. A synthetic key satisfies Steam's local step only — titles that validate the key online still require a real one.
->>>>>>> pr183
-- Denuvo-protected games still require explicit ticket data. OpenSteamTool stores `AppTicket` and `ETicket` through the platform credential store.
-- Use `setAppTicket(appid, "hex")` and `setETicket(appid, "hex")` in Lua config to write these values to the platform credential store automatically.
-- Denuvo verification has a 30-minute validity window. After this window expires, authorization may fail with Denuvo error code `88500005`; refresh the ticket data before retrying.
-- AppTicket priority: explicit tickets have the highest priority, including tickets configured by `setAppTicket` and existing cached `AppTicket` credential values. If no explicit AppTicket is available, OpenSteamTool falls back to the forged local ConfigStore ticket path.
-- SteamID priority: read cached `SteamID` first; if missing, parse from explicit `AppTicket`. On Windows, the credential store backend currently uses `HKCU\Software\Valve\Steam\Apps\<AppId>`. The Linux backend is not implemented yet.
+#### 使用 `extract_tickets` 提取令牌
 
-#### Extracting tickets with `extract_tickets`
+`extract_tickets` 工具会转储你需要的 `AppTicket` 和 `ETicket` 十六进制字符串，用于 `setAppTicket` / `setETicket`。在 Steam 运行并登录到**拥有**目标游戏的账户的机器上运行它。
 
-The `extract_tickets` tool dumps the `AppTicket` and `ETicket` hex strings you need for `setAppTicket` / `setETicket`. Run it on a machine where Steam is running and logged into an account that **owns** the target game.
-
-1. Build the tools (see [Build](#build)); the binary lands in `build/tools/Release/extract_tickets.exe`.
-2. Run it with the target AppId (or run it with no argument and type the AppId when prompted):
+1. 构建工具（参见 [构建](#构建)）；二进制文件位于 `build/tools/Release/extract_tickets.exe`
+2. 使用目标 AppId 运行它（或不带参数运行，在提示时输入 AppId）：
    ```powershell
    extract_tickets.exe 1361510
    ```
-3. It reads the Steam install path from the registry, loads `steamclient64.dll`, and writes everything into an `<appid>/` folder next to the executable:
-   - `appticket.bin` — raw app ownership ticket (binary)
-   - `eticket.bin` — raw encrypted app ticket (binary)
-   - `tickets.txt` — plain-text summary with the hex strings:
+3. 它从注册表读取 Steam 安装路径，加载 `steamclient64.dll`，并将所有内容写入可执行文件旁边的 `<appid>/` 文件夹：
+   - `appticket.bin` — 原始应用所有权令牌（二进制）
+   - `eticket.bin` — 原始加密应用令牌（二进制）
+   - `tickets.txt` — 包含十六进制字符串的纯文本摘要：
      ```
      appid:1361510
      appticket(184 bytes):14000000...
      eticket(143 bytes):...
      ```
-   A ticket that could not be obtained is reported as `appticket:null` / `eticket:null`.
-4. Paste the hex strings from `tickets.txt` into your Lua config:
+   无法获取的令牌报告为 `appticket:null` / `eticket:null`
+4. 将 `tickets.txt` 中的十六进制字符串粘贴到你的 Lua 配置中：
    ```lua
    setAppTicket(1361510, "14000000...")
    setETicket(1361510, "...")
    ```
 
-> **Note:** Tickets are only valid when extracted from an account that **genuinely owns** the game.
+> **注意：** 令牌仅当从**真正拥有**游戏的账户提取时才有效
 
-### Stats and Achievements
-- Enable stats and achievements for unowned games.
-- Uses `setStat(appid, "steamid")` to configure which SteamID's achievement data to pull.
-- If no `setStat` is configured for an app, OpenSteamTool queries `https://stats.opensteamtool.com/{appid}` when `[stats] enable_api = true` (default).
-- Priority: `setStat` > stats API when enabled and valid > hardcoded preset SteamID `76561198028121353`.
+### 统计和成就
+- 为未拥有的游戏启用统计和成就
+- 使用 `setStat(appid, "steamid")` 配置拉取哪个 SteamID 的成就数据
+- 如果某个应用未配置 `setStat`，当 `[stats] enable_api = true`（默认）时，OpenSteamTool 查询 `https://stats.opensteamtool.com/{appid}`
+- 优先级：`setStat` > stats API（启用且有效时）> 硬编码预设 SteamID `76561198028121353`
 
-### Online Fix
-- Add `-onlinefix` to the Steam launch parameters to enable 480-based online play in games that use lobby matchmaking. The current limitation is that only one such game can run at a time.To revert, simply remove -onlinefix from the launch parameters — online play returns to normal on the next launch.
+### 在线修复
+- 在 Steam 启动参数中添加 `-onlinefix` 以在需要使用大厅匹配的游戏里启用基于 480 的在线游戏。当前限制是同一时间只能运行一个这样的游戏。要撤销，只需从启动参数中移除 `-onlinefix` — 下次启动时在线游戏恢复正常
 
-## Future
-- Steam Cloud synchronization support.(This is a huge project)
+## 未来计划
+- Steam 云同步支持。（这是个超级大工程）
 
-## Usage
-1. Run `build.bat` from the project root to build the project.
-2. Copy generated `dwmapi.dll`, `xinput1_4.dll` and `OpenSteamTool.dll` to the Steam root directory.
-3. Create Lua directory (for example `C:\steam\config\lua`) and place Lua scripts there. The DLL will automatically load and execute them.
-4. Lua example:
+## 使用方法
+
+1. 在项目根目录运行 `build.bat` 构建项目
+2. 将生成的 `dwmapi.dll`、`xinput1_4.dll` 和 `OpenSteamTool.dll` 复制到 Steam 根目录
+3. 创建 Lua 目录（例如 `C:\steam\config\lua`）并将 Lua 脚本放在那里。DLL 会自动加载并执行它们
+4. Lua 示例：
 ```lua
-addappid(1361510) -- unlock game with appid 1361510
+addappid(1361510) -- 解锁 appid 为 1361510 的游戏
 
-addappid(1361511, 0,"5954562e7f5260400040a818bc29b60b335bb690066ff767e20d145a3b6b4af0") -- unlock game with appid 1361511 depotKey is "5954562e7f5260400040a818bc29b60b335bb690066ff767e20d145a3b6b4af0" 
+addappid(1361511, 0,"5954562e7f5260400040a818bc29b60b335bb690066ff767e20d145a3b6b4af0") -- 解锁 appid 为 1361511 的游戏，depotKey 为 "5954562e7f5260400040a818bc29b60b335bb690066ff767e20d145a3b6b4af0" 
 
-addtoken(1361510,"2764735786934684318") -- add access token ("2764735786934684318") for game with appid 1361510 
--- No Longer Supported:
---pinApp(1361510) -- pin game with appid 1361510 to prevent it from being updated
+addtoken(1361510,"2764735786934684318") -- 为 appid 为 1361510 的游戏添加访问令牌 ("2764735786934684318") 
+-- 不再支持：
+--pinApp(1361510) -- 固定 appid 为 1361510 的游戏以防止其被更新
 
-setManifestid(1361511,"5656605350306673283") -- pin depotid:1361511 manifest_gid:5656605350306673283, size defaults to 0
-setManifestid(1361511,"5656605350306673283", 12345678) -- same but with explicit size
+setManifestid(1361511,"5656605350306673283") -- 固定 depotid:1361511 manifest_gid:5656605350306673283，大小默认为 0
+setManifestid(1361511,"5656605350306673283", 12345678) -- 同上，但指定明确大小
 
-setAppTicket(1361510,"0100000000000000...") -- write AppTicket to the credential store; on Windows: HKCU\Software\Valve\Steam\Apps\1361510\AppTicket
+setAppTicket(1361510,"0100000000000000...") -- 将 AppTicket 写入凭据存储；在 Windows 上：HKCU\Software\Valve\Steam\Apps\1361510\AppTicket
 
-setETicket(1361510,"0100000000000000...") -- write ETicket to the credential store; on Windows: HKCU\Software\Valve\Steam\Apps\1361510\ETicket
+setETicket(1361510,"0100000000000000...") -- 将 ETicket 写入凭据存储；在 Windows 上：HKCU\Software\Valve\Steam\Apps\1361510\ETicket
 
-setStat(1361510, "76561197960287930") -- use the specified SteamID's achievement data for appid 1361510
--- If not configured, the stats API is used when enabled; otherwise default SteamID 76561198028121353 is used.
-
-setlegacycdkey(1361510, "ABCD-EFGH-JKMN-PQRS") -- serve this third-party retail CD key at the "Updating product key" step
--- If not configured, a deterministic synthetic key is generated per app+account (satisfies Steam's local step only).
+setStat(1361510, "76561197960287930") -- 使用指定 SteamID 的成就数据用于 appid 1361510
+-- 若未配置，启用时使用 stats API；否则使用默认 SteamID 76561198028121353
 ```
 
-All function names are **case-insensitive**. `setAppTicket`, `setappticket`, `SetAppticket`, `SETAPPTICKET` etc. are all equivalent. The same applies to every registered function (`addAppId`, `AddToken`, `SETManifestid`, etc.).
+所有函数名**不区分大小写**。`setAppTicket`、`setappticket`、`SetAppticket`、`SETAPPTICKET` 等都是等价的。每个注册的函数都适用（`addAppId`、`AddToken`、`SETManifestid` 等）。
 
-### Configuration (optional)
+### 配置（可选）
 
-Rename `opensteamtool.example.toml` to `opensteamtool.toml` and place it in the Steam root directory (next to `steam.exe`).
-If no config file is found, built-in defaults are used — no auto-creation.
-The file is watched while Steam is running; valid changes are hot-reloaded without restarting Steam.
+将 `opensteamtool.example.toml` 重命名为 `opensteamtool.toml` 并放在 Steam 根目录（与 `steam.exe` 同级）。
+若找不到配置文件，则使用内置默认值——不会自动创建。
+文件在 Steam 运行时被监视；有效更改会热重载，无需重启 Steam。
 
 ```toml
 [log]
-# Debug build only.  Level: trace, debug, info, warn, error
+# 仅调试构建。级别：trace、debug、info、warn、error
 level = "info"
 
 [manifest]
-# Upstream API for depot manifest request codes.  Options: "20770407", "opensteamtool", "steamrun", "wudrm", "SDM"
-# url only selects the first upstream to try. When failover is enabled and
-# that upstream fails, the rest are tried in table order; a failed upstream
-# is skipped for 60 s. The configured url stays the first choice.
+# 仓库 manifest 请求码的上游 API。选项："20770407"、"opensteamtool"、"steamrun"、"wudrm"、"SDM"
+# url 只决定优先尝试的上游；开启 failover 后首选失败会自动顺位尝试其余上游，
+# 刚失败的上游 60 秒内跳过；配置的 url 始终是下次取码的首选。
 url = "20770407"
-# Failover across upstreams (hot-reloaded). false queries only url above.
+# 上游顺位回退开关（热加载生效）。false 表示只请求上面配置的 url。
 failover = true
 
-# HTTP timeouts for manifest requests (milliseconds), each within [1, 15000].
-# One fetch (all fallback attempts included) shares the 15000 ms budget.
+# manifest 请求的 HTTP 超时（毫秒），每项取值范围 [1, 15000]。
+# 单次取码（含全部回退）整体共享 15000 毫秒预算。
 timeout_resolve_ms = 5000
 timeout_connect_ms = 5000
 timeout_send_ms    = 10000
 timeout_recv_ms    = 10000
 
 [stats]
-# Query https://stats.opensteamtool.com/{appid} when no Lua setStat override exists.
-# Priority: setStat > stats API > hardcoded preset SteamID.
+# 当没有 Lua setStat 覆盖时查询 https://stats.opensteamtool.com/{appid}
+# 优先级：setStat > stats API > 硬编码预设 SteamID
 enable_api = true
 
 [presence]
-# Friend broadcast mode for unlocked games. Options: "spacewar", "none"
+# 未拥有游戏的好友广播模式。选项："spacewar"、"none"
 display = "spacewar"
 
-# Additional Lua config directories (optional).
-# Files are loaded after the default <Steam>/config/lua folder.
-# The default folder is always loaded last so user files take priority.
+# 额外的 Lua 配置目录（可选）
+# 文件在默认 <Steam>/config/lua 文件夹之后加载
+# 默认文件夹总是最后加载，因此用户文件优先级更高
 [lua]
 paths = []
 
 [inject]
-# Optional library injection into game processes.
-# The injected library must match the target process architecture.
+# 可选的游戏进程库注入
+# 注入的库必须与目标进程架构匹配
 enabled = false
 # library_x64 = "OpenSteamTool.GameHook.x64.dll"
 # library_x86 = "OpenSteamTool.GameHook.x86.dll"
 
-# Optional metadata mirror. See "Steam version compatibility" below.
+# 可选元数据镜像。参见下面的"Steam 版本兼容性"
 [remote]
 # url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 ```
 
-### Manifest via Lua
+### 通过 Lua 获取 Manifest
 
-Two manifest code functions are supported:
+支持两个 manifest 码函数：
 
 #### `fetch_manifest_code(gid)`
 
-Basic function that receives only the manifest GID.
+基础函数，只接收 manifest GID
 
-#### `fetch_manifest_code_ex(app_id, depot_id, gid)` *(recommended)*
+#### `fetch_manifest_code_ex(app_id, depot_id, gid)` *（推荐）*
 
-Extended function that receives `app_id`, `depot_id`, and `gid`. Allows constructing API endpoints that require app identification.
+扩展函数，接收 `app_id`、`depot_id` 和 `gid`。允许构造需要应用识别的 API 端点
 
-The C++ runtime provides two Lua helpers:
+C++ 运行时提供两个 Lua 辅助函数：
 
-| Function | Signature | Returns |
-|----------|-----------|---------|
+| 函数 | 签名 | 返回值 |
+|------|------|--------|
 | `http_get`  | `http_get(url [, headers])`       | `body, status_code` |
 | `http_post` | `http_post(url, body [, headers])` | `body, status_code` |
 
-`headers` is an optional table: `{["Key"]="Value", ...}`.
+`headers` 是可选表：`{["Key"]="Value", ...}`
 
-### Steam version compatibility
+### Steam 版本兼容性
 
-OpenSteamTool no longer ships byte-pattern signatures inside the DLL. Instead, on each launch it computes the SHA-256 of `steamclient64.dll` and `steamui.dll` on disk and looks up a matching pattern file from the upstream tracker at [`OpenSteam001/steam-monitor`](https://github.com/OpenSteam001/steam-monitor) (`pattern` branch).
+OpenSteamTool 不再在 DLL 中内置字节模式签名。相反，每次启动时它计算磁盘上 `steamclient64.dll` 和 `steamui.dll` 的 SHA-256，并从上游跟踪器 [`OpenSteam001/steam-monitor`](https://github.com/OpenSteam001/steam-monitor)（`pattern` 分支）查找匹配的模式文件
 
-Lookup order (when no cached file exists for the SHA, i.e. first launch after a Steam update):
+查找顺序（本地无对应 SHA 缓存时，即 Steam 更新后首次启动）：
 
-1. **Local cache** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`. A cache hit is used directly without contacting remotes. The cache is overwritten after every successful remote fetch.
-2. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`. Default source.
-3. **GitHub raw** — automatic fallback when the previous mirror returns 404 / connection refused / timeout / 5xx. No configuration required. Set `[remote] order = "github-first"` to restore the previous GitHub-first order.
+1. **本地缓存** — `<Steam>\opensteamtool\pattern\<subdir>\<sha256>.toml`。命中直接使用，不再请求远端。每次成功远程获取后覆盖缓存
+2. **jsDelivr CDN** — `https://cdn.jsdelivr.net/gh/OpenSteam001/steam-monitor@pattern/...`。默认来源
+3. **GitHub raw** — 当前一个镜像返回 404 / 连接失败 / 超时 / 5xx 时自动尝试下一个。无需配置。配置 `[remote] order = "github-first"` 可恢复之前的 GitHub 优先顺序
 
-Only when all mirrors return **HTTP 404** is the upstream bot considered to have not yet published a TOML for this Steam build. Without a local cache, a one-shot popup appears with the unmatched DLL name, its SHA-256, the expected cache path, and the upstream URL. Only the hooks tied to that DLL are disabled — the rest of OpenSteamTool keeps working.
+只有全部镜像都返回 **HTTP 404**，才判定上游机器人尚未为此 Steam 版本发布 TOML。此时若无本地缓存，会出现一次性弹窗，显示不匹配的 DLL 名称、其 SHA-256、预期缓存路径和上游 URL。仅禁用与该 DLL 相关的钩子——OpenSteamTool 的其余部分继续工作
 
-You can also drop a pattern TOML into the cache directory manually if you know the layout for a given build; the file name must be `<sha256>.toml`. It is used directly on the next launch via the cache hit path.
+如果你知道给定版本的布局，也可以手动将模式 TOML 放入缓存目录；文件名必须为 `<sha256>.toml`。下次启动命中缓存直接使用
 
-> A short outbound HTTPS request is performed when the local cache misses (one per DLL: `steamclient64.dll`, `steamui.dll`). The downloaded bodies are tiny (~10 KB each) and the work runs on a worker thread, so it never blocks Steam's loader.
+> 本地无缓存时每次启动执行简短的出站 HTTPS 请求（每个 DLL 一个：`steamclient64.dll`、`steamui.dll`）。下载的内容很小（每个约 10 KB），工作在线程上运行，因此永远不会阻塞 Steam 加载器
 
-#### Using a different mirror
+#### 使用不同的镜像
 
-For most users, the built-in **jsDelivr -> GitHub** fallback is enough. To use a private mirror or intranet server, configure a full URL template. A custom mirror replaces the built-in remote sources; local cache fallback remains available.
+对大多数用户来说，内置的 **jsDelivr -> GitHub** 回退已经足够。要使用私有镜像或内网服务器，配置完整的 URL 模板。自定义镜像替换内置远程源；本地缓存回退仍然可用
 
-The template must include `{channel}`, `{component}`, and `{sha256}`. Channels currently used are `pattern` and `ipc`.
+模板必须包含 `{channel}`、`{component}` 和 `{sha256}`。当前使用的通道是 `pattern` 和 `ipc`
 
 ```toml
 [remote]
-# Mirror order: "jsdelivr-first" (default) or "github-first".
+# 镜像顺序："jsdelivr-first"（默认）或 "github-first"。
 # order = "jsdelivr-first"
 url_template = "https://your.server/{channel}/{component}/{sha256}.toml"
 # url_template = "https://fast.jsdelivr.net/gh/OpenSteam001/steam-monitor@{channel}/{component}/{sha256}.toml"
 ```
 
-### Debug logging
+### 调试日志
 
-Debug builds write per-module log files under `<Steam>/opensteamtool/`:
+调试构建在 `<Steam>/opensteamtool/` 下写入每个模块的日志文件：
 
-| File | Source | Content |
-|------|--------|---------|
-| `main.log`          | General | Init, config loading, Lua parsing, utilities |
-| `ipc.log`           | `LOG_IPC_*` | IPC commands, InterfaceCall dispatch, spoofing |
-| `netpacket.log`     | `LOG_NETPACKET_*` | Network packet send/recv, eMsg dispatch |
-| `manifest.log`      | `LOG_MANIFEST_*` | Manifest download, `fetch_manifest_code`, manifest binding |
-| `decryptionkey.log` | `LOG_DECRYPTIONKEY_*` | Depot decryption key injection |
-| `keyvalue.log`      | `LOG_KEYVALUE_*` | KeyValues patching (manifest binding) |
-| `misc.log`          | `LOG_MISC_*` | Engine pointer capture, AppId hints |
-| `achievement.log`   | `LOG_ACHIEVEMENT_*` | UserStats requests/responses, steamid spoofing |
-| `pics.log`          | `LOG_PICS_*` | PICS access token injection |
-| `package.log`       | `LOG_PACKAGE_*` | Package injection, FileWatcher events |
-| `onlinefix.log`     | `LOG_ONLINEFIX_*` | Online fix (480 AppId spoofing) |
-| `richpresence.log`  | `LOG_RICHPRESENCE_*` | Rich Presence packet construction and injection |
-| `steamui.log`       | `LOG_STEAMUI_*` | SteamUI hook diagnostics |
-| `pipe.log`          | `LOG_PIPE_*` | Pipe handshakes, process inspection, Denuvo authorization, library injection |
-| `platform.log`      | `LOG_PLATFORM_*` | Platform helper diagnostics, including remote-process operations |
+| 文件 | 来源 | 内容 |
+|------|------|------|
+| `main.log` | 通用 | 初始化、配置加载、Lua 解析、工具 |
+| `ipc.log` | `LOG_IPC_*` | IPC 命令、InterfaceCall 分发、欺骗 |
+| `netpacket.log` | `LOG_NETPACKET_*` | 网络包发送/接收、eMsg 分发 |
+| `manifest.log` | `LOG_MANIFEST_*` | Manifest 下载、`fetch_manifest_code`、manifest 绑定 |
+| `decryptionkey.log` | `LOG_DECRYPTIONKEY_*` | 仓库解密密钥注入 |
+| `keyvalue.log` | `LOG_KEYVALUE_*` | KeyValues 补丁（manifest 绑定） |
+| `misc.log` | `LOG_MISC_*` | 引擎指针捕获、AppId 提示 |
+| `achievement.log` | `LOG_ACHIEVEMENT_*` | UserStats 请求/响应、steamid 欺骗 |
+| `pics.log` | `LOG_PICS_*` | PICS 访问令牌注入 |
+| `package.log` | `LOG_PACKAGE_*` | 包注入、FileWatcher 事件 |
+| `onlinefix.log` | `LOG_ONLINEFIX_*` | 在线修复（480 AppId 欺骗） |
+| `richpresence.log` | `LOG_RICHPRESENCE_*` | 丰富状态包构造和注入 |
+| `steamui.log` | `LOG_STEAMUI_*` | SteamUI 钩子诊断 |
+| `pipe.log` | `LOG_PIPE_*` | 管道握手、进程检查、Denuvo 授权、库注入 |
+| `platform.log` | `LOG_PLATFORM_*` | 平台助手诊断，包括远程进程操作 |
 
-The log level is controlled by `[log] level` in `opensteamtool.toml`.
+日志级别由 `opensteamtool.toml` 中的 `[log] level` 控制
 
-## Build
+## 构建
 
-### Requirements
+### 要求
 - Windows 10/11
 - CMake 3.20+
-- Visual Studio 2022 with MSVC (x64 toolchain)
+- 带有 MSVC（x64 工具链）的 Visual Studio 2022
 
-### Runtime requirements
-- Outbound HTTPS access to the metadata mirrors (`cdn.jsdelivr.net`, `raw.githubusercontent.com`) on first launch after a Steam update (see [Steam version compatibility](#steam-version-compatibility)). Cached afterwards.
+### 运行时要求
+- Steam 更新后首次启动需要访问元数据镜像（`cdn.jsdelivr.net`、`raw.githubusercontent.com`）的出站 HTTPS（参见 [Steam 版本兼容性](#steam-版本兼容性)）。之后会缓存
 
-### Quick build
+### 快速构建
 ```powershell
 build.bat
 ```
 
-### Output
-- Debug: `build/Debug/OpenSteamTool.dll`, `build/Debug/dwmapi.dll`, `build/Debug/xinput1_4.dll`
-- Release: `build/Release/OpenSteamTool.dll`, `build/Release/dwmapi.dll`, `build/Release/xinput1_4.dll`
+### 输出
+- Debug：`build/Debug/OpenSteamTool.dll`、`build/Debug/dwmapi.dll`、`build/Debug/xinput1_4.dll`
+- Release：`build/Release/OpenSteamTool.dll`、`build/Release/dwmapi.dll`、`build/Release/xinput1_4.dll`
 
-## Disclaimer
-This project is provided for research and educational purposes only. You are responsible for complying with local laws, platform terms of service, and software licenses.
+## 免责声明
+本项目仅供研究和教育目的使用。你负责遵守当地法律、平台服务条款和软件许可证。

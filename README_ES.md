@@ -19,7 +19,7 @@
   </p>
 
   <p>
-    <a href="README.md">
+    <a href="README_EN.md">
       <img src="https://flagcdn.com/w40/us.png" width="22" alt="Bandera de Estados Unidos">
       English
     </a>
@@ -27,6 +27,11 @@
     <a href="README_ES.md">
       <img src="https://flagcdn.com/w40/es.png" width="22" alt="Bandera de España">
       Español
+    </a>
+    &nbsp;|&nbsp;
+    <a href="README.md">
+      <img src="https://flagcdn.com/w40/cn.png" width="22" alt="Bandera de China">
+      中文
     </a>
   </p>
 </div>
