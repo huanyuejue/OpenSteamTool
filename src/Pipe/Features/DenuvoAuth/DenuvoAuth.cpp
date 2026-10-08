@@ -1,5 +1,6 @@
 #include "Pipe/Features/DenuvoAuth/DenuvoAuth.h"
 
+#include "Hook/Hooks_Package.h"
 #include "Pipe/Features/DenuvoAuth/ProtectionScan.h"
 #include "Utils/Logging/Log.h"
 #include "Utils/Tickets/AppTicket.h"
@@ -105,7 +106,8 @@ namespace {
                 handshakeCount >= kEndDenuvoVerificationHandshake) {
                 stage = Stage::EndAuthorization;
                 LOG_PIPE_INFO("DenuvoAuth: authorization window ended {}", this->DebugString());
-                if(LuaConfig::IsOwned(authorizedAppId)){
+                // 有效许可（真拥有或家庭共享）才持久化身份：共享游戏排除在外会导致其 54。
+                if(Hooks_Package::HasValidLicense(authorizedAppId)){
                     WriteSteamIdOnEndAuthorization();
                 }
             }
