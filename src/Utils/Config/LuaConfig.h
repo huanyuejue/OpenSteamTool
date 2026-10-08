@@ -13,6 +13,8 @@ namespace LuaConfig{
     bool HasDepot(AppId_t appId, bool checkOwned=true);
     bool IsOwned(AppId_t appId);
     void MarkOwned(AppId_t appId);
+    // 是否配过 dauth2(appid)：Denuvo 授权切 Scheme 2 长租约。
+    bool IsDAuth2(AppId_t appId);
     std::vector<AppId_t> GetAllDepotIds();
     std::vector<uint8> GetDecryptionKey(AppId_t appId);
     uint64_t GetAccessToken(AppId_t appId);

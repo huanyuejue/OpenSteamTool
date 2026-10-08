@@ -70,7 +70,10 @@ namespace {
         resp.set_piSignature(ticket.signatureOffset);
         resp.set_pcbSignature(ticket.signatureSize);
 
-        LOG_IPC_DEBUG("IClientUser::GetAppOwnershipTicketExtendedData: AppId={} {}", 
+        // 票已交付：延长 Denuvo 授权租约，盖住随即的 memcmp(Ticket->SteamID, GetSteamID()) 交叉验证。
+        PipeManager::DenuvoAuth::OnOwnershipTicketRequested(pipe);
+
+        LOG_IPC_DEBUG("IClientUser::GetAppOwnershipTicketExtendedData: AppId={} {}",
                         appId,resp.DebugString());
     }
 

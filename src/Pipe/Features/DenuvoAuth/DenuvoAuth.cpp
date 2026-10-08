@@ -7,6 +7,7 @@
 #include "Utils/Config/LuaConfig.h"
 #include "OSTPlatform/include/SteamCredentialStore.h"
 
+#include <chrono>
 #include <cwctype>
 #include <optional>
 #include <string_view>
@@ -16,6 +17,17 @@ namespace PipeManager::DenuvoAuth {
 namespace {
 
     constexpr uint32 kEndDenuvoVerificationHandshake = 2;
+
+    // Scheme 1（默认）：启动微脉冲 300ms。盖住 Denuvo 离线 token 验证，
+    // 同时在游戏引擎初始化存档目录前过期，存档进原生 userdata/<真SteamID>/。
+    constexpr std::chrono::milliseconds kScheme1StartupPulseDuration{300};
+    // Scheme 1（默认）：票据微脉冲 300ms。Denuvo 取票后立即做
+    // memcmp(Ticket->SteamID, GetSteamID()) 交叉检查（约 3ms），300ms 高容错覆盖多 pipe 验证。
+    constexpr std::chrono::milliseconds kScheme1TicketPulseDuration{300};
+    // Scheme 2（dauth2 兼容）：启动宽限 2500ms。盖住 Denuvo VM 加密延迟（约 1.4s）。
+    constexpr std::chrono::milliseconds kDAuth2StartupGraceDuration{2500};
+    // Scheme 2（dauth2 兼容）：票据租约 3000ms。盖住二次验证 burst（约 1.8s）。
+    constexpr std::chrono::milliseconds kDAuth2TicketLeaseDuration{3000};
 
     enum class Stage {
         None,
@@ -77,13 +89,28 @@ namespace {
         Stage stage = Stage::None;
         uint32 pid = 0;
         uint32 handshakeCount = 0;
+        // Scheme 2 开关：dauth2(appid) 配过即 true，单向升级不降级。
+        bool isDAuth2 = false;
+        // 启动脉冲只 armed 一次；deadline 只延长不缩短（monotonic）。
+        bool startupArmed = false;
+        std::chrono::steady_clock::time_point scheme1Deadline{};
+        std::chrono::steady_clock::time_point authDeadline{};
 
         std::optional<PipeKey> authorizationPipe;
         AppId_t authorizedAppId = k_uAppIdInvalid;
 
         std::string DebugString() const {
-            return std::format("denuvo={} stage={} handshakeCount={} auth_appid={} pid={}",
-                               denuvo, ToString(stage), handshakeCount, authorizedAppId, pid);
+            const auto now = std::chrono::steady_clock::now();
+            const auto& deadline = isDAuth2 ? authDeadline : scheme1Deadline;
+            long long remainingMs = 0;
+            if (deadline != std::chrono::steady_clock::time_point{}) {
+                remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - now).count();
+                if (remainingMs < 0) remainingMs = 0;
+            }
+            return std::format("mode={} denuvo={} stage={} remaining_ms={} handshakeCount={} auth_appid={} pid={}",
+                               isDAuth2 ? "dauth2" : "default", denuvo, ToString(stage),
+                               remainingMs, handshakeCount, authorizedAppId, pid);
         }
 
         void OnHandshake(const PipeContext& ctx, const PipeKey& pipeKey) {
@@ -100,6 +127,20 @@ namespace {
                 pid = ctx.process.pid;
                 stage = Stage::Authorizing;
                 LOG_PIPE_INFO("DenuvoAuth: authorization pipe selected {}", this->DebugString());
+                // 首个授权 pipe 上 armed 启动脉冲：多线程引擎的多 pipe 握手都盖在租约里，
+                // 不再单纯依赖"2 次握手就关"的计数（多线程下计数不可靠）。deadline 只延长不缩短。
+                if (!startupArmed) {
+                    startupArmed = true;
+                    const auto now = std::chrono::steady_clock::now();
+                    const auto startupDeadline = now + (isDAuth2 ? kDAuth2StartupGraceDuration
+                                                                : kScheme1StartupPulseDuration);
+                    auto& deadline = isDAuth2 ? authDeadline : scheme1Deadline;
+                    if (startupDeadline > deadline) {
+                        deadline = startupDeadline;
+                    }
+                    LOG_PIPE_INFO("DenuvoAuth: startup pulse armed for pid={} mode={} {}", pid,
+                                  isDAuth2 ? "dauth2" : "default", this->DebugString());
+                }
             }
 
             if (stage == Stage::Authorizing &&
@@ -113,8 +154,32 @@ namespace {
             }
         }
 
+        // 票据请求延长租约：Denuvo 取票后立即做 memcmp 交叉验证，
+        // 租约盖住验证 burst，过期自动恢复真实身份。
+        void OnOwnershipTicketRequested() {
+            if (!denuvo || !authorizationPipe.has_value()) return;
+            const auto now = std::chrono::steady_clock::now();
+            const auto extension = now + (isDAuth2 ? kDAuth2TicketLeaseDuration
+                                                  : kScheme1TicketPulseDuration);
+            auto& deadline = isDAuth2 ? authDeadline : scheme1Deadline;
+            if (extension > deadline) {
+                deadline = extension;
+                LOG_PIPE_INFO("DenuvoAuth: ticket pulse extended for pid={} mode={} {}", pid,
+                              isDAuth2 ? "dauth2" : "default", this->DebugString());
+            }
+        }
+
+        bool LeaseActive() const {
+            const auto& deadline = isDAuth2 ? authDeadline : scheme1Deadline;
+            if (deadline == std::chrono::steady_clock::time_point{}) return false;
+            return std::chrono::steady_clock::now() <= deadline;
+        }
+
         bool CanUseAuthorizedIdentity(const PipeKey& key) const {
-            return denuvo && stage == Stage::Authorizing && authorizationPipe == key;
+            if (!denuvo || authorizationPipe != key) return false;
+            // 纯租约制：计数只决定存档身份持久化时机，不决定授权开关。
+            // 多线程验证 burst 在租约内看到的身份一致，不 54；过期自动恢复真实身份。
+            return LeaseActive();
         }
 
         void WriteSteamIdOnEndAuthorization() const {
@@ -177,7 +242,28 @@ void Apply(const PipeContext& ctx) {
     g_pipeProcess[pipeKey] = ctx.process;
 
     EnsureScanned(auth, ctx.process);
+    // Scheme 2 开关单向升级：一旦配过 dauth2 就保持，不降级。
+    // 升级时若启动脉冲已按 default armed 过，authDeadline 还是 zero，
+    // 必须补一次 dauth2 的 armed，否则授权会立刻断（monotonic，只延长）。
+    if (LuaConfig::IsDAuth2(ctx.appId) && !auth.isDAuth2) {
+        auth.isDAuth2 = true;
+        if (auth.startupArmed) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto startupDeadline = now + kDAuth2StartupGraceDuration;
+            if (startupDeadline > auth.authDeadline) {
+                auth.authDeadline = startupDeadline;
+            }
+        }
+    }
     auth.OnHandshake(ctx, pipeKey);
+}
+
+void OnOwnershipTicketRequested(const CPipeClient* pipe) {
+    if (!pipe) return;
+    const PipeKey pipeKey = MakePipeKey(pipe);
+    ProcessAuth* auth = FindAuthForPipe(pipeKey);
+    if (!auth) return;
+    auth->OnOwnershipTicketRequested();
 }
 
 bool IsAuthorizedPipe(const CPipeClient* pipe) {
@@ -187,13 +273,24 @@ bool IsAuthorizedPipe(const CPipeClient* pipe) {
     }
 
     const PipeKey pipeKey = MakePipeKey(pipe);
-    const ProcessAuth* auth = FindAuthForPipe(pipeKey);
+    ProcessAuth* auth = FindAuthForPipe(pipeKey);
     if (!auth) {
         LOG_PIPE_TRACE("DenuvoAuth: pipe not tracked by DenuvoAuth {}", pipeKey.DebugString());
         return false;
     }
 
     if (!auth->CanUseAuthorizedIdentity(pipeKey)) {
+        // 租约过期但计数没走完：计数触发不了收尾，这里补推进，
+        // 否则存档身份永远落不了盘（WriteSteamIdOnEndAuthorization 调不到）。
+        if (auth->denuvo && auth->stage == Stage::Authorizing &&
+            auth->startupArmed && !auth->LeaseActive()) {
+            auth->stage = Stage::EndAuthorization;
+            LOG_PIPE_INFO("DenuvoAuth: lease expired, authorization window ended {}",
+                          auth->DebugString());
+            if (Hooks_Package::HasValidLicense(auth->authorizedAppId)) {
+                auth->WriteSteamIdOnEndAuthorization();
+            }
+        }
         LOG_PIPE_TRACE("DenuvoAuth: pipe not in authorization window {} {}", pipeKey.DebugString(), auth->DebugString());
         return false;
     }

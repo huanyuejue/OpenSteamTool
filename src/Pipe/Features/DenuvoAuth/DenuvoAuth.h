@@ -12,4 +12,8 @@ namespace PipeManager::DenuvoAuth {
     // not reached the end-authorization handshake.
     bool IsAuthorizedPipe(const CPipeClient* pipe);
 
+    // 票据请求延长租约（Scheme 1 +300ms / Scheme 2 +3000ms）。
+    // GetAppOwnershipTicketExtendedData 的 handler 里调，盖住 Denuvo 的 memcmp 交叉验证。
+    void OnOwnershipTicketRequested(const CPipeClient* pipe);
+
 } // namespace PipeManager::DenuvoAuth
