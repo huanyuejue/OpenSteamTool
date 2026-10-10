@@ -24,7 +24,16 @@ namespace {
 
         const uint64 spoofed = AppTicket::GetSpoofSteamID(appId);
         if (!spoofed) {
-            LOG_IPC_WARN("IClientUser::GetSteamID: AppId={} no valid steamid - cannot spoof", appId);
+            // 非 Denuvo 假入库游戏：forge 走了但 credential 无身份，spoof 成 forge 票里的身份，
+            // 否则票人不一致 SteamStub 报 54。无 donor 时 GetForgeSteamID 返回 0，原样放行。
+            const uint64 forged = AppTicket::GetForgeSteamID(appId);
+            if (!forged) {
+                LOG_IPC_WARN("IClientUser::GetSteamID: AppId={} no valid steamid - cannot spoof", appId);
+                return;
+            }
+            LOG_IPC_DEBUG("IClientUser::GetSteamID: AppId={} Original: {} -> Forged: 0x{:X}({})",
+                            appId,resp.DebugString(),forged, forged);
+            resp.set_returnValue(forged);
             return;
         }
 

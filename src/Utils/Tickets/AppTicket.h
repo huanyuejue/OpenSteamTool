@@ -38,6 +38,11 @@ namespace AppTicket {
     //Get spoof steamID From the cached AppOwnershipTicket for the given AppId.
     uint64_t GetSpoofSteamID(AppId_t appId);
 
+    // Forge 出票并解析票里 SteamID（donor 的身份）。给非 Denuvo 假入库游戏做
+    // GetSteamID 回退 spoof 用：forge 走了但 credential 无身份时，票里是谁人就是谁，
+    // 否则 SteamStub 票人不一致报 54。无 donor 时返回 0。
+    uint64_t GetForgeSteamID(AppId_t appId);
+
     // Write AppTicket binary data to Steam's local credential store.
     bool WriteAppOwnershipTicket(AppId_t appId, const std::vector<uint8_t>& data);
 
