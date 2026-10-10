@@ -150,6 +150,9 @@ namespace Hooks_IPC {
     }
 
     void Uninstall() {
+        // 回退场景会重装 hook：不清掉 handler 会越积越多（已实测 6→12），
+        // 虽然 dispatch 只取首个匹配无功能影响，但属于泄漏，必须清。
+        g_Handlers.clear();
         UNHOOK_BEGIN();
         UNINSTALL_HOOK_C(IPCProcessMessage);
         UNHOOK_END();

@@ -175,6 +175,8 @@ namespace
                     LOG_STEAMUI_INFO("LoadModuleWithPath: diverted {} (original {}) -> diversion {}{}",
                                      path ? path : "steamclient64.dll", h, client_hModule,
                                      (h == client_hModule) ? " (already loaded)" : "");
+                    // Steam 换到副本上 = 隔离生效，超时回退看门狗不再动作。
+                    g_DiversionAdopted.store(true);
                 } else {
                     LOG_STEAMUI_INFO("LoadModuleWithPath: returned fallback steamclient64.dll ({})",
                                      client_hModule);

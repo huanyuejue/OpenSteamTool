@@ -1,5 +1,6 @@
 #include "dllmain.h"
 #include "Hook/HookManager.h"
+#include "Hook/Hooks_Package.h"
 #include "Hook/Hooks_SteamUI.h"
 #include "Utils/Config/ConfigFileWatcher.h"
 #include "Utils/Config/LuaFileWatcher.h"
@@ -74,6 +75,63 @@ bool CopySteamClientToDiversion() {
 }
 
 } // namespace
+
+// 回退到原版 steamclient：B2（劫持没装上）和超时看门狗（Steam 不来换）共用。
+// clientHooksArmed：client hook 是否已装在副本上（看门狗场景 true，需先卸再装；
+// B2 场景 false，hook 还没装，直接换模块即可）。
+// 成功返回 true；原版都加载失败返回 false（调用方按致命处理）。
+static bool FallbackToOriginalSteamClient(bool clientHooksArmed) {
+    if (clientHooksArmed) SteamClient::CoreUnhook();
+    // 注意：绝不 FreeLibrary diversion 副本！cloud_redirect 初始化时经
+    // GetModuleHandle 拿到副本句柄做地址解析 + vtable patch，存的全是绝对地址；
+    // 一旦卸载，下一次 stats/cloud RPC 就踩野指针崩溃（已实测：回退 12 秒后死）。
+    // 副本废弃但保持映射（多一个模块映射的代价），hook 已卸、谁也不会再用它，安全。
+    // client_hModule 直接指向原版，后续劫持分发与查询重定向全走原版，全程一致。
+    client_hModule = OSTPlatform::DynamicLibrary::Load(SteamclientPath);
+    g_IsDiversionActive.store(false);
+    if (!client_hModule) {
+        LOG_ERROR("Diversion fallback: Load steamclient64.dll failed: {} (err={})",
+                  SteamclientPath, OSTPlatform::DynamicLibrary::GetLastErrorCode());
+        return false;
+    }
+    // PatternLoader 的 map 按模块句柄缓存，换模块后必须重 Load 一次。
+    PatternLoader::Load(client_hModule, SteamclientPath, "steamclient");
+    if (clientHooksArmed) {
+        SteamClient::CoreHook();
+        PatternLoader::ReportMissingFunctions();
+    }
+    // hook 晚装：Steam 在生效前已查完 ownership，之后不再主动重查。
+    // 置自举标志，下一次 CheckAppOwnership 用已就位的 CUser 强制刷一次，
+    // 第二波查询到来时注入完成。正常路径从不置位，零影响。
+    Hooks_Package::RequestRequeryOnce();
+    LOG_WARN("Diversion: fallback complete, hooks now on original steamclient64 — "
+             "unlock keeps working, isolation disabled");
+    return true;
+}
+
+// 超时回退看门狗：init 完成后 15s 内 Steam 还没换到副本上，基本可判定它在用
+// 启动时加载的原版（正常机器 1 秒内就换），副本上的 hook 全打空（解锁静默全灭）。
+// 此时搬回原版保解锁。误回退的代价只是丢隔离（= 1.5.2.1 行为，已验证可用）。
+// 睡眠分片：进程退出时最多 5s 内响应，不在已卸载的代码里醒来。
+constexpr auto kDiversionAdoptTimeout = std::chrono::seconds{15};
+constexpr auto kWatchdogSlice = std::chrono::seconds{5};
+static_assert(kDiversionAdoptTimeout >= kWatchdogSlice,
+              "watchdog slice must divide the adopt timeout (else zero slices = instant fallback)");
+
+static uint32_t DiversionWatchdog() {
+    const int slices = static_cast<int>(kDiversionAdoptTimeout / kWatchdogSlice);
+    for (int i = 0; i < slices; ++i) {
+        std::this_thread::sleep_for(kWatchdogSlice);
+        // 进程正在退出/已卸载：直接结束，不碰任何东西。
+        if (!g_HooksInstalled.load()) return 0;
+    }
+    if (!g_IsDiversionActive.load() || g_DiversionAdopted.load()) return 0;
+    LOG_WARN("Diversion: Steam did not adopt the diversion module within {}s "
+             "(still using startup-loaded original), falling back to original steamclient64",
+             static_cast<int>(kDiversionAdoptTimeout.count()));
+    if (!FallbackToOriginalSteamClient(true)) return 1;
+    return 0;
+}
 
 // prepare key runtime paths.
 bool InitializeSteamComponents()
@@ -166,19 +224,13 @@ static uint32_t InitThread(OSTPlatform::DynamicLibrary::ModuleHandle selfModule)
 
     // 如果劫持没装上（pattern 缺失），影子模块就是没人用的摆设——
     // 此时必须换回原版再装 client hook，否则解锁静默全灭。
-    // 注意 PatternLoader 的 map 按模块句柄缓存，换模块后必须重 Load 一次。
     if (g_IsDiversionActive.load() && !Hooks_SteamUI::IsDiversionRedirectArmed()) {
         LOG_WARN("Diversion redirect unavailable (LoadModuleWithPath pattern missing), "
                  "falling back to original steamclient64 — unlock keeps working, isolation disabled");
-        ::FreeLibrary(static_cast<HMODULE>(client_hModule));
-        client_hModule = OSTPlatform::DynamicLibrary::Load(SteamclientPath);
-        g_IsDiversionActive.store(false);
-        if (!client_hModule) {
-            LOG_ERROR("Fallback Load steamclient64.dll failed: {} (err={})",
-                      SteamclientPath, OSTPlatform::DynamicLibrary::GetLastErrorCode());
+        if (!FallbackToOriginalSteamClient(false)) {
+            LOG_ERROR("Fallback Load steamclient64.dll failed");
             return 1;
         }
-        PatternLoader::Load(client_hModule, SteamclientPath, "steamclient");
     }
 
     // IPC method metadata (funcHash, fencepost, argc, ...)
@@ -204,6 +256,8 @@ static uint32_t InitThread(OSTPlatform::DynamicLibrary::ModuleHandle selfModule)
     g_HooksInstalled.store(true);
     LOG_INFO("OpenSteamTool init complete ({})",
              g_IsDiversionActive.load() ? "Diversion active" : "Diversion bypassed, using original steamclient64");
+    // 超时回退看门狗：detached 一次性，60s 后检查 Steam 是否换到副本上。
+    OSTPlatform::Thread::StartDetached([] { return DiversionWatchdog(); });
     return 0;
 }
 
@@ -222,6 +276,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD dwReason, PVOID pvReserved)
     {
         g_HooksInstalled.store(false);
         g_IsDiversionActive.store(false);
+        g_DiversionAdopted.store(false);
         ConfigFileWatcher::Stop();
         LuaFileWatcher::Stop();
         SteamUI::CoreUnhook();

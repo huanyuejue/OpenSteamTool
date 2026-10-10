@@ -33,6 +33,10 @@ inline std::atomic<bool> g_HooksInstalled{false};
 // Diversion 影子模块是否生效。false = 回退到原版 steamclient（hook 就地打在
 // 原模块上，Denuvo/RE 完整性检查会看到，敏感游戏可能闪退），必须大声告警。
 inline std::atomic<bool> g_IsDiversionActive{false};
+// Steam 是否真的换到了 diversion 副本上（LoadModuleWithPath 劫持分发成功）。
+// 15s 超时还没换 = Steam 在用启动时加载的原版，副本上的 hook 全打空，
+// 此时必须回退原版保解锁（1.5.2.1 行为），否则静默全灭。
+inline std::atomic<bool> g_DiversionAdopted{false};
 
 inline constexpr size_t kRuntimePathCapacity = 260;
 

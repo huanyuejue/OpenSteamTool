@@ -3,6 +3,7 @@
 #include "Hooks_SteamUI.h"
 #include "dllmain.h"
 #include "Utils/HookSupport/VehCommon.h"
+#include <atomic>
 #include <mutex>
 #include <unordered_set>
 
@@ -17,6 +18,8 @@ namespace {
     PackageInfo* g_pInjectedPackageInfo = nullptr;
     bool  g_licenseInitialized = false;
     bool  g_licenseRefreshPending = false;
+    // 回退自举一次性标志：看门狗线程置位，Steam IPC 线程消费（原子，跨线程）。
+    std::atomic<bool> g_forceRequeryOnce{false};
 
     // 家庭共享许可集合：CheckAppOwnership 见过的 bFamilyShared/bBorrowed。
     // 真拥有走 LuaConfig::OwnedAppIdSet，这两个集合互斥，一起构成 HasValidLicense。
@@ -106,6 +109,15 @@ namespace {
         bool result = oCheckAppOwnership(pObj, appId, pOwn);
         TryInitFakeLicenseOnce();
 
+        // 自举刷新（只一次）：回退场景下这次调用大概率是第一次，
+        // GetPackageInfo capture 还没就绪，注入做了一半。g_pCUser 本次已就位，
+        // 强制刷一次 license，第二波查询到来时 capture 就绪，注入完成。
+        // exchange 原子取反清零，不可能循环。
+        if (!g_licenseInitialized && g_forceRequeryOnce.exchange(false)) {
+            LOG_PACKAGE_INFO("CheckAppOwnership: priming license re-query after late hook install");
+            MarkLicenseAsChangedAndProcessUpdates();
+        }
+
         // 先记原始共享状态再改 pOwn：后面注入分支会把标记清掉，不记就丢了。
         // 每次同步（出借者收回后 Steam 会重查，此时标记消失，必须同步移除，否则永久误判）。
         {
@@ -179,6 +191,10 @@ namespace Hooks_Package {
         UNHOOK_BEGIN();
         UNINSTALL_HOOK_C(CheckAppOwnership);
         UNHOOK_END();
+    }
+
+    void RequestRequeryOnce() {
+        g_forceRequeryOnce.store(true);
     }
 
     void NotifyLicenseChanged() {
