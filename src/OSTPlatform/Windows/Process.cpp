@@ -367,8 +367,8 @@ std::optional<std::string> GetEnvironmentVariableValue(uint32_t pid, std::wstrin
 }
 
 std::optional<std::string> GetProcessCommandLine(uint32_t pid) {
-    // 读目标进程 PEB 里的完整命令行（含启动参数），给 -dauth2/-nodenuvo/
-    // -forcedenuvo 这类按进程开关认路用。读不到就当没配，不拦不报错。
+    // 读目标进程 PEB 里的完整命令行（含启动参数），给需要按命令行识别
+    // 启动方式的调用方用。读不到就当没拿到，不拦不报错。
     Windows::UniqueHandle process =
         OpenProcessHandle(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ);
     if (!process) return std::nullopt;

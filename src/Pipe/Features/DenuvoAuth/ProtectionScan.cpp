@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -65,8 +66,31 @@ namespace {
     constexpr size_t kLegacyScanChunkBytes = 8ull * 1024ull * 1024ull;
     constexpr size_t kOepScanChunkBytes = 8ull * 1024ull * 1024ull;
 
+    // 结构兜底的尺寸门槛：太小的 RWX 段是正常的 JIT / 跳板代码，不参与判定。
+    constexpr uint32 kProtectorBlobMinBytes = 4u * 1024u * 1024u;
+    // 熵只在日志里记录，用来判断保护壳当前是加密态还是已解密态，不参与判定。
+    // 实测差异极大：同样是 Denuvo，.didata 6.7、.ecode 6.6、.debug 4.8，
+    // 拿它当门槛只会把最后一类漏掉。
+    constexpr double kProtectorBlobHighConfidenceEntropy = 7.0;
+    constexpr size_t kProtectorBlobEntropySampleBytes = 8ull * 1024ull * 1024ull;
+
     double BytesToMiB(uint64 bytes) {
         return static_cast<double>(bytes) / (1024.0 * 1024.0);
+    }
+
+    double SectionEntropy(std::span<const uint8_t> bytes) {
+        if (bytes.empty()) return 0.0;
+        std::array<uint64, 256> counts{};
+        for (uint8_t value : bytes) ++counts[value];
+
+        const double inv = 1.0 / static_cast<double>(bytes.size());
+        double entropy = 0.0;
+        for (uint64 count : counts) {
+            if (count == 0) continue;
+            const double p = static_cast<double>(count) * inv;
+            entropy -= p * std::log2(p);
+        }
+        return entropy;
     }
 
     constexpr std::array<std::string_view, 10> kSteamRuntimeModuleNames = {
@@ -227,6 +251,49 @@ namespace {
         return match;
     }
 
+    // 结构兜底：抓既没有 OEP 特征、段内也没有 DENUVO 字样的构建。
+    //
+    // 判定靠两条同时成立，都不依赖能扫描的特征串：
+    //   1. 存在 Denuvo 的 legacy 段名（.arch/.srdata/.xpdata/.xtls），这是
+    //      保护壳自己改名留下的硬特征；
+    //   2. 存在足够大的可写且可执行段，这是运行时就地解密的必然产物。
+    // 单看第二条不成立：正常加密壳也会产出 RWX 大段。两条一起才够特异。
+    // 熵不参与判定，只写进日志供排查保护壳当时处于加密态还是解密态。
+    std::optional<DetectionMatch> TryProtectedBlobSection(
+        const ModuleCandidate& module,
+        const OSTPlatform::PE::Image& image) {
+        if (FindLegacyDenuvoSection(image) == nullptr) {
+            LOG_PIPE_DEBUG("DenuvoAuth: no legacy Denuvo section, structural check not applicable path={}",
+                           module.path);
+            return std::nullopt;
+        }
+
+        for (const auto& section : image.Sections()) {
+            if (!(section.IsExecutable() && section.IsWritable())) continue;
+            if (section.rawSize < kProtectorBlobMinBytes) continue;
+
+            const size_t sampleSize =
+                (std::min)(static_cast<size_t>(section.rawSize), kProtectorBlobEntropySampleBytes);
+            const OSTPlatform::PE::ByteBuffer sample = image.ReadRawBytes(section.rawOffset, sampleSize);
+            const double entropy = sample.empty() ? 0.0 : SectionEntropy(sample);
+
+            DetectionMatch match{};
+            match.method = DetectionMethod::ProtectedBlobSection;
+            match.sectionName = section.name;
+            match.entryPointRva = image.EntryPointRva();
+            match.matchRawOffset = section.rawOffset;
+            match.matchRva = section.virtualAddress;
+            LOG_PIPE_INFO("DenuvoAuth: protector blob section path={} section={} raw_size={} ({:.2f} MB) entropy={:.3f} state={}",
+                          module.path, section.name, section.rawSize,
+                          BytesToMiB(static_cast<uint64>(section.rawSize)), entropy,
+                          entropy >= kProtectorBlobHighConfidenceEntropy ? "encrypted" : "decrypted-or-sparse");
+            return match;
+        }
+
+        LOG_PIPE_DEBUG("DenuvoAuth: legacy section present but no RWX blob large enough path={}", module.path);
+        return std::nullopt;
+    }
+
     std::optional<DetectionMatch> DetectModule(
         const ModuleCandidate& module,
         const OSTPlatform::PE::Image& image) {
@@ -236,7 +303,14 @@ namespace {
         }
 
         if (const auto* legacySection = FindLegacyDenuvoSection(image)) {
-            return TryLegacySectionString(module, image, *legacySection);
+            if (const auto match = TryLegacySectionString(module, image, *legacySection)) {
+                return match;
+            }
+        }
+
+        // 前两条都没命中时的最后一道：段结构特征。
+        if (const auto match = TryProtectedBlobSection(module, image)) {
+            return match;
         }
         return std::nullopt;
     }
@@ -353,6 +427,7 @@ const char* ToString(DetectionMethod method) {
     case DetectionMethod::None: return "None";
     case DetectionMethod::LegacySectionString: return "LegacySectionString";
     case DetectionMethod::OepPattern: return "OepPattern";
+    case DetectionMethod::ProtectedBlobSection: return "ProtectedBlobSection";
     }
     return "Unknown";
 }

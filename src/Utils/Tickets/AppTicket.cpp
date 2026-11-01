@@ -8,6 +8,7 @@
 
 #include <cstring>
 #include <iterator>
+#include <string>
 
 namespace AppTicket {
     constexpr AppId_t kLocalAppTicketSourceAppId = 7;
@@ -18,13 +19,34 @@ namespace AppTicket {
     constexpr size_t kSteamIdTicketMinimumSize = 16;
     constexpr const wchar_t* kRegAppsPath = L"Software\\Valve\\Steam\\Apps";
 
-    // donor 只借结构 + 真签名，不借身份：够大、非占位、首字段非零即用，
-    // 真假由 Denuvo 定。16B 占位符和垃圾大值直接扔。
+    // donor 借用的是结构 + 真签名：够大、非占位、首字段非零即可用。
+    // 16B 占位符和垃圾大值直接扔，真假交给 Denuvo 定。
     static bool IsUsableDonor(const std::vector<uint8_t>& t) {
         if (t.size() <= kAppTicketSignatureSize || t.size() > kDonorMaxSize) return false;
         uint32_t head = 0;
         memcpy(&head, t.data(), sizeof(head));
         return head != 0;
+    }
+
+    // 票里 SteamID 的低 32 位就是账号 ID，用它认出这张票是谁的。
+    // 布局与 GetSpoofSteamID 一致：[Size][Version][SteamID]。
+    static uint32_t DonorAccountId(const std::vector<uint8_t>& t) {
+        if (t.size() < kSteamIdTicketMinimumSize) return 0;
+        uint64_t steamId = 0;
+        memcpy(&steamId, t.data() + 8, sizeof(steamId));
+        return static_cast<uint32_t>(steamId & 0xFFFFFFFFull);
+    }
+
+    // 当前登录账号。拿不到时返回 0，调用方据此退回纯结构校验。
+    // 切号必然重启 Steam，进程内不会有第二个值，不需要缓存失效逻辑。
+    static uint32_t ActiveAccountId() {
+        uint32_t accountId = 0;
+        std::wstring universe;
+        if (OSTPlatform::SteamCredentialStore::GetActiveUser(accountId, universe) !=
+            OSTPlatform::SteamCredentialStore::Status::Ok) {
+            return 0;
+        }
+        return accountId;
     }
 
     // pin：记住 donor 来源，下次先验 pin（单 IPC 线程，无锁，沿用存量假设）。
@@ -50,55 +72,106 @@ namespace AppTicket {
     // 扫描顺序：pin → 内存 7 → 内存 228980（验证位）→ 注册表全枚举。
     // 目标游戏自己跳过（它有票就不会进 forge）。donor 字节不落盘，
     // 落到目标名下会污染该游戏的 spoof 身份。
+    //
+    // 分两轮：第一轮只收当前登录账号名下的票，第二轮才放宽到任意可用票。
+    // 池子账号常常一张真票都没有，宽松轮是保底；但只要有本账号的票，
+    // 就先用它，免得票里的身份和目标游戏 spoof 出来的对不上。
     static bool FindDonorAppTicket(AppId_t excludeAppId, std::vector<uint8_t>& out, AppId_t& donorAppId) {
+        const uint32_t activeAccount = ActiveAccountId();
+
+        auto TryAccept = [&](DonorKind kind, AppId_t cand) -> bool {
+            std::vector<uint8_t> ticket;
+            if (!ReadDonor(kind, cand, ticket)) return false;
+            if (activeAccount != 0) {
+                const uint32_t donorAccount = DonorAccountId(ticket);
+                if (donorAccount != 0 && donorAccount != activeAccount) return false;
+            }
+            out = std::move(ticket);
+            donorAppId = cand;
+            return true;
+        };
+
+        auto TryMemCandidates = [&](bool requireOwn) -> bool {
+            const AppId_t memCandidates[] = { kLocalAppTicketSourceAppId, kSysVerifyAppId };
+            for (AppId_t cand : memCandidates) {
+                if (cand == excludeAppId) continue;
+                if (!requireOwn) {
+                    if (TryAccept(DonorKind::Memory, cand)) {
+                        g_donorKind = DonorKind::Memory;
+                        g_donorAppId = cand;
+                        LOG_INFO("ForgeLocalAppOwnershipTicket: forge donor from memory appid={} ({} bytes, own_ticket={})",
+                                 cand, out.size(), activeAccount != 0 && DonorAccountId(out) == activeAccount);
+                        return true;
+                    }
+                    continue;
+                }
+                std::vector<uint8_t> ticket;
+                if (!ReadDonor(DonorKind::Memory, cand, ticket)) continue;
+                if (activeAccount == 0 || DonorAccountId(ticket) != activeAccount) continue;
+                out = std::move(ticket);
+                donorAppId = cand;
+                g_donorKind = DonorKind::Memory;
+                g_donorAppId = cand;
+                LOG_INFO("ForgeLocalAppOwnershipTicket: forge donor from memory appid={} ({} bytes, own_ticket=true)",
+                         cand, out.size());
+                return true;
+            }
+            return false;
+        };
+
+        auto TryRegistry = [&](bool requireOwn) -> bool {
+            HKEY hApps = nullptr;
+            if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegAppsPath, 0, KEY_ENUMERATE_SUB_KEYS,
+                              &hApps) != ERROR_SUCCESS) {
+                return false;
+            }
+            wchar_t nameBuf[32];
+            for (DWORD index = 0; ; ++index) {
+                DWORD nameLen = static_cast<DWORD>(std::size(nameBuf));
+                if (RegEnumKeyExW(hApps, index, nameBuf, &nameLen, nullptr, nullptr,
+                                  nullptr, nullptr) != ERROR_SUCCESS) {
+                    break;
+                }
+                const unsigned long id = wcstoul(nameBuf, nullptr, 10);
+                if (id == 0 || id > UINT32_MAX || static_cast<AppId_t>(id) == excludeAppId) continue;
+                const AppId_t cand = static_cast<AppId_t>(id);
+                std::vector<uint8_t> ticket;
+                if (!ReadDonor(DonorKind::Registry, cand, ticket)) continue;
+                if (requireOwn && (activeAccount == 0 || DonorAccountId(ticket) != activeAccount)) continue;
+                out = std::move(ticket);
+                donorAppId = cand;
+                RegCloseKey(hApps);
+                g_donorKind = DonorKind::Registry;
+                g_donorAppId = cand;
+                LOG_INFO("ForgeLocalAppOwnershipTicket: forge donor ticket found: appid={} ({} bytes, own_ticket={})",
+                         cand, out.size(), activeAccount != 0 && DonorAccountId(out) == activeAccount);
+                return true;
+            }
+            RegCloseKey(hApps);
+            return false;
+        };
+
         out.clear();
         donorAppId = 0;
+
+        // pin 先验：上次选中的来源优先，省掉重复全扫。
         if (g_donorKind != DonorKind::None && g_donorAppId != excludeAppId) {
-            if (ReadDonor(g_donorKind, g_donorAppId, out)) {
-                donorAppId = g_donorAppId;
+            if (TryAccept(g_donorKind, g_donorAppId)) {
                 return true;
             }
             g_donorKind = DonorKind::None;
             g_donorAppId = 0;
         }
-        const AppId_t memCandidates[] = { kLocalAppTicketSourceAppId, kSysVerifyAppId };
-        for (AppId_t cand : memCandidates) {
-            if (cand == excludeAppId) continue;
-            if (ReadDonor(DonorKind::Memory, cand, out)) {
-                g_donorKind = DonorKind::Memory;
-                g_donorAppId = cand;
-                donorAppId = cand;
-                if (cand == kSysVerifyAppId) {
-                    LOG_INFO("FindDonorAppTicket: 228980 sysverify hit ({} bytes), usable donor", out.size());
-                }
-                return true;
-            }
+
+        if (activeAccount != 0) {
+            if (TryMemCandidates(true)) return true;
+            if (TryRegistry(true)) return true;
         }
-        HKEY hApps = nullptr;
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegAppsPath, 0, KEY_ENUMERATE_SUB_KEYS,
-                          &hApps) != ERROR_SUCCESS) {
-            return false;
-        }
-        wchar_t nameBuf[32];
-        for (DWORD index = 0; ; ++index) {
-            DWORD nameLen = static_cast<DWORD>(std::size(nameBuf));
-            if (RegEnumKeyExW(hApps, index, nameBuf, &nameLen, nullptr, nullptr,
-                              nullptr, nullptr) != ERROR_SUCCESS) {
-                break;
-            }
-            const unsigned long id = wcstoul(nameBuf, nullptr, 10);
-            if (id == 0 || id > UINT32_MAX || static_cast<AppId_t>(id) == excludeAppId) continue;
-            if (ReadDonor(DonorKind::Registry, static_cast<AppId_t>(id), out)) {
-                RegCloseKey(hApps);
-                g_donorKind = DonorKind::Registry;
-                g_donorAppId = static_cast<AppId_t>(id);
-                donorAppId = static_cast<AppId_t>(id);
-                LOG_INFO("ForgeLocalAppOwnershipTicket: forge donor ticket found: appid={} ({} bytes)",
-                         donorAppId, out.size());
-                return true;
-            }
-        }
-        RegCloseKey(hApps);
+        if (TryMemCandidates(false)) return true;
+        if (TryRegistry(false)) return true;
+
+        out.clear();
+        donorAppId = 0;
         return false;
     }
 
@@ -263,21 +336,5 @@ namespace AppTicket {
             return steamID;
         }
         return 0;
-    }
-
-    uint64_t GetForgeSteamID(AppId_t appId) {
-        // 非名单游戏不 spoof，跟 GetSpoofSteamID 同门控。
-        if (!LuaConfig::HasDepot(appId)) {
-            return 0;
-        }
-        // forge 是纯函数，可重复调：取票里 SteamID（donor 的身份），票里是谁人就是谁。
-        // Layout 与 GetSpoofSteamID 同：[uint32 Size][uint32 Version][uint64 SteamID][...]。
-        std::vector<uint8_t> ticket = ForgeLocalAppOwnershipTicket(appId);
-        if (ticket.size() < kSteamIdTicketMinimumSize) {
-            return 0;
-        }
-        const uint64_t steamID = reinterpret_cast<const uint64_t*>(ticket.data())[1];
-        LOG_DEBUG("GetForgeSteamID for AppId {}: -> 0x{:X}({})", appId, steamID, steamID);
-        return steamID;
     }
 }

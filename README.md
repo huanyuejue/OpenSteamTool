@@ -63,6 +63,8 @@
 - Denuvo 验证有 30 分钟有效窗口。过期后授权可能失败，显示 Denuvo 错误代码 `88500005`；重试前请刷新令牌数据
 - AppTicket 优先级：显式令牌优先级最高，包括通过 `setAppTicket` 配置的令牌和已缓存的 `AppTicket` 凭据值。若无可用显式 AppTicket，OpenSteamTool 回退到伪造的本地 ConfigStore 令牌路径
 - SteamID 优先级：优先读取缓存的 `SteamID`；若缺失，则从显式 `AppTicket` 解析。在 Windows 上，凭据存储后端当前使用 `HKCU\Software\Valve\Steam\Apps\<AppId>`。Linux 后端尚未实现
+- 当前登录账号拥有该游戏时，OpenSteamTool 会在 Denuvo 授权握手结束时自动把真实 `SteamID` 写入凭据存储，无需手工配置。这样用正版账号跑过一次后，换到其他账号也能凭已缓存的身份直接启动
+- Denuvo 识别默认按特征串与入口点特征判断；两者都未命中时，回退到结构特征：同时具备 legacy 保护壳段名（`.arch`、`.srdata`、`.xpdata`、`.xtls`）与足够大的可写可执行段。识别过程与结果记录在 `pipe.log`
 
 #### 使用 `extract_tickets` 提取令牌
 
@@ -130,11 +132,6 @@ setStat(1361510, "76561197960287930") -- 使用指定 SteamID 的成就数据用
 -- 若未配置，启用时使用 stats API；否则使用默认 SteamID 76561198028121353
 
 setlegacycdkey(1361510, "XXXXX-XXXXX-XXXXX") -- 第三方老游戏 CD-Key 覆盖，原样存入
-
-dauth2(2638890) -- 该游戏 Denuvo 授权切长租约（启动 2500ms + 票 3000ms）；启动验证慢、报 88500012/54 的游戏用，默认短脉冲即可
-
-nodenuvo(1361510) -- 该游戏跳过 Denuvo 识别与授权（误识别的普通游戏用）；disallowdenuvo 同义
-forcedenuvo(1361510) -- 强制按 Denuvo 游戏走识别与授权（识别漏掉的硬核游戏用）；启动参数 -dauth2/-nodenuvo/-forcedenuvo 同效
 
 -- 内建 HTTP（给自建 manifest/eticket 接口用）：返回 body, status_code 两个值
 -- headers 可选，表格式，如 {["Accept"]="application/json"}

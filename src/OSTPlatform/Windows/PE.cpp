@@ -157,6 +157,14 @@ bool Section::ContainsRva(uint32_t rva) const {
     return end >= virtualAddress && rva >= virtualAddress && rva < end;
 }
 
+bool Section::IsExecutable() const {
+    return (characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+}
+
+bool Section::IsWritable() const {
+    return (characteristics & IMAGE_SCN_MEM_WRITE) != 0;
+}
+
 Image::Image(const std::filesystem::path& path) : path_(path) {
     const Stopwatch totalTimer;
     FileRead header = ReadFileRange(path, 0, kHeaderReadBytes);
@@ -242,6 +250,7 @@ Image::Image(const std::filesystem::path& path) : path_(path) {
             section->Misc.VirtualSize,
             section->PointerToRawData,
             section->SizeOfRawData,
+            section->Characteristics,
         });
     }
 

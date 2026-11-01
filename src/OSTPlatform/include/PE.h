@@ -43,8 +43,13 @@ struct Section {
     uint32_t virtualSize = 0;
     uint32_t rawOffset = 0;
     uint32_t rawSize = 0;
+    // IMAGE_SCN_MEM_* 标志位，直接从段头取。运行时自解密的保护壳必须让
+    // 代码段可写可执行，靠这个标志位能在不依赖特征串的前提下认出来。
+    uint32_t characteristics = 0;
 
     bool ContainsRva(uint32_t rva) const;
+    bool IsExecutable() const;
+    bool IsWritable() const;
 };
 
 struct Export {

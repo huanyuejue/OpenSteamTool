@@ -29,16 +29,6 @@ namespace LuaConfig{
     std::unordered_map<uint64_t, ManifestOverride> ManifestOverrides{};
     std::unordered_map<AppId_t, uint64_t> StatSteamIdSet{};
     std::unordered_set<AppId_t> OwnedAppIdSet{};
-    // Scheme 2（dauth2 兼容）名单：dauth2(appid) 配过即进，Denuvo 授权用长租约。
-    std::unordered_set<AppId_t> DAuth2Set{};
-    // nodenuvo(appid)：该游戏跳过 Denuvo 识别与授权，按普通游戏走。
-    std::unordered_set<AppId_t> NoDenuvoSet{};
-    // forcedenuvo(appid)：强制按 Denuvo 游戏走识别与授权（识别漏掉的硬核游戏用）。
-    std::unordered_set<AppId_t> ForcedDenuvoSet{};
-    // 命令行 -dauth2/-nodenuvo/-forcedenuvo 生效过的名单（启动参数优先级高于识别结果）。
-    std::unordered_set<AppId_t> CmdLineDAuth2Set{};
-    std::unordered_set<AppId_t> CmdLineNoDenuvoSet{};
-    std::unordered_set<AppId_t> CmdLineForcedDenuvoSet{};
 
     // Per-file tracking: which depots each .lua file contributed.
     static std::string g_currentFile;
@@ -451,42 +441,6 @@ namespace LuaConfig{
         return 0;
     }
 
-    // ── Lua: dauth2 ─────────────────────────────────────────────
-    static int lua_dauth2(lua_State* L) {
-        // dauth2(appid) — 该游戏 Denuvo 授权切 Scheme 2 长租约（启动 2500ms + 票 3000ms），
-        // 给复杂离线验证的老游戏兜底。默认 Scheme 1 短脉冲（300ms + 300ms）即可。
-        if (lua_gettop(L) < 1 || !lua_isinteger(L, 1))
-            return luaL_error(L, "dauth2 requires (appid: integer)");
-        lua_Integer val = lua_tointeger(L, 1);
-        if (val <= 0 || val > UINT32_MAX)
-            return luaL_error(L, "dauth2: appid out of range");
-        DAuth2Set.insert(static_cast<AppId_t>(val));
-        return 0;
-    }
-
-    // ── Lua: nodenuvo / forcedenuvo ───────────────────────────────
-    static int lua_nodenuvo(lua_State* L) {
-        // nodenuvo(appid) — 该游戏跳过 Denuvo 识别与授权（误识别的普通游戏用）。
-        if (lua_gettop(L) < 1 || !lua_isinteger(L, 1))
-            return luaL_error(L, "nodenuvo requires (appid: integer)");
-        lua_Integer val = lua_tointeger(L, 1);
-        if (val <= 0 || val > UINT32_MAX)
-            return luaL_error(L, "nodenuvo: appid out of range");
-        NoDenuvoSet.insert(static_cast<AppId_t>(val));
-        return 0;
-    }
-
-    static int lua_forcedenuvo(lua_State* L) {
-        // forcedenuvo(appid) — 强制按 Denuvo 游戏走识别与授权（识别漏掉的硬核游戏用）。
-        if (lua_gettop(L) < 1 || !lua_isinteger(L, 1))
-            return luaL_error(L, "forcedenuvo requires (appid: integer)");
-        lua_Integer val = lua_tointeger(L, 1);
-        if (val <= 0 || val > UINT32_MAX)
-            return luaL_error(L, "forcedenuvo: appid out of range");
-        ForcedDenuvoSet.insert(static_cast<AppId_t>(val));
-        return 0;
-    }
-
     // ── init / cleanup ───────────────────────────────────────────
     static bool Initialize() {
         if (g_lua_state)
@@ -521,10 +475,6 @@ namespace LuaConfig{
         register_func(g_lua_state, "setappticket", lua_setAppticket);
         register_func(g_lua_state, "seteticket", lua_setEticket);
         register_func(g_lua_state, "setstat", lua_setStat);
-        register_func(g_lua_state, "dauth2", lua_dauth2);
-        register_func(g_lua_state, "nodenuvo", lua_nodenuvo);
-        register_func(g_lua_state, "disallowdenuvo", lua_nodenuvo);
-        register_func(g_lua_state, "forcedenuvo", lua_forcedenuvo);
         return true;
     }
 
@@ -550,33 +500,6 @@ namespace LuaConfig{
             LOG_PACKAGE_INFO("Marking app {} as owned", AppId);
             OwnedAppIdSet.insert(AppId);
         }
-    }
-
-    bool IsDAuth2(AppId_t AppId) {
-        return DAuth2Set.count(AppId) != 0 || CmdLineDAuth2Set.count(AppId) != 0;
-    }
-
-    void SetCmdLineDAuth2(AppId_t AppId, bool active) {
-        if (active) CmdLineDAuth2Set.insert(AppId);
-        else CmdLineDAuth2Set.erase(AppId);
-    }
-
-    bool IsNoDenuvo(AppId_t AppId) {
-        return NoDenuvoSet.count(AppId) != 0 || CmdLineNoDenuvoSet.count(AppId) != 0;
-    }
-
-    void SetCmdLineNoDenuvo(AppId_t AppId, bool active) {
-        if (active) CmdLineNoDenuvoSet.insert(AppId);
-        else CmdLineNoDenuvoSet.erase(AppId);
-    }
-
-    bool IsForcedDenuvo(AppId_t AppId) {
-        return ForcedDenuvoSet.count(AppId) != 0 || CmdLineForcedDenuvoSet.count(AppId) != 0;
-    }
-
-    void SetCmdLineForcedDenuvo(AppId_t AppId, bool active) {
-        if (active) CmdLineForcedDenuvoSet.insert(AppId);
-        else CmdLineForcedDenuvoSet.erase(AppId);
     }
 
     std::vector<AppId_t> GetAllDepotIds() {

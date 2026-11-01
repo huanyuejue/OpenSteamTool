@@ -15,6 +15,9 @@ namespace PipeManager::DenuvoAuth {
         None,
         LegacySectionString,
         OepPattern,
+        // 结构特征识别：legacy 保护壳段名与可写可执行大段同时具备。
+        // 用于兜住既不携带 OEP 特征串、段内也没有 DENUVO 字样的构建。
+        ProtectedBlobSection,
     };
 
     const char* ToString(DetectionMethod method);

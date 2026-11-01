@@ -5,7 +5,6 @@
 #include "Utils/HookSupport/VehCommon.h"
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
 #include <atomic>
-#include <mutex>
 #include <unordered_set>
 #include <windows.h>
 
@@ -32,12 +31,6 @@ namespace {
         g_injectExAddr = ep->ExceptionRecord->ExceptionAddress;
         return EXCEPTION_EXECUTE_HANDLER;
     }
-
-    // 家庭共享许可集合：CheckAppOwnership 见过的 bFamilyShared/bBorrowed。
-    // 真拥有走 LuaConfig::OwnedAppIdSet，这两个集合互斥，一起构成 HasValidLicense。
-    // CheckAppOwnership 跑在 Steam 线程上，加锁保护。
-    std::mutex g_licenseMutex;
-    std::unordered_set<AppId_t> g_sharedLicenseApps;
 
     constexpr PackageId_t kInjectedPackageId = 0;
     constexpr uint64_t kInjectedPkgAccessToken = 10660652434190618804ull;
@@ -151,16 +144,6 @@ namespace {
             MarkLicenseAsChangedAndProcessUpdates();
         }
 
-        // 先记原始共享状态再改 pOwn：后面注入分支会把标记清掉，不记就丢了。
-        // 每次同步（出借者收回后 Steam 会重查，此时标记消失，必须同步移除，否则永久误判）。
-        {
-            std::lock_guard<std::mutex> lock(g_licenseMutex);
-            if (pOwn && (pOwn->bFamilyShared || pOwn->bBorrowed))
-                g_sharedLicenseApps.insert(appId);
-            else
-                g_sharedLicenseApps.erase(appId);
-        }
-
         if (LuaConfig::HasDepot(appId,false)) {
             // 家庭共享借来的游戏不计入真拥有，避免后续被排除在注入之外
             bool isTrulyOwned = result && (pOwn->ExistInPackageNums > 1) && !pOwn->bFamilyShared && !pOwn->bBorrowed;
@@ -215,16 +198,6 @@ namespace {
 }
 
 namespace Hooks_Package {
-    bool IsSharedLicense(AppId_t appId) {
-        std::lock_guard<std::mutex> lock(g_licenseMutex);
-        return g_sharedLicenseApps.count(appId) != 0;
-    }
-
-    bool HasValidLicense(AppId_t appId) {
-        if (LuaConfig::IsOwned(appId)) return true;
-        return IsSharedLicense(appId);
-    }
-
     void Install() {
         RESOLVE_C(CUtlMemoryGrow);
         RESOLVE_C(MarkLicenseAsChanged);
