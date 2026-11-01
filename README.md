@@ -64,7 +64,8 @@
 - AppTicket 优先级：显式令牌优先级最高，包括通过 `setAppTicket` 配置的令牌和已缓存的 `AppTicket` 凭据值。若无可用显式 AppTicket，OpenSteamTool 回退到伪造的本地 ConfigStore 令牌路径
 - SteamID 优先级：优先读取缓存的 `SteamID`；若缺失，则从显式 `AppTicket` 解析。在 Windows 上，凭据存储后端当前使用 `HKCU\Software\Valve\Steam\Apps\<AppId>`。Linux 后端尚未实现
 - 当前登录账号拥有该游戏时，OpenSteamTool 会在 Denuvo 授权握手结束时自动把真实 `SteamID` 写入凭据存储，无需手工配置。这样用正版账号跑过一次后，换到其他账号也能凭已缓存的身份直接启动
-- Denuvo 识别默认按特征串与入口点特征判断；两者都未命中时，回退到结构特征：同时具备 legacy 保护壳段名（`.arch`、`.srdata`、`.xpdata`、`.xtls`）与足够大的可写可执行段。识别过程与结果记录在 `pipe.log`
+- Denuvo 识别依次尝试：入口点特征、段内 `DENUVO` 字样，都未命中时回退到结构特征——存在足够大的可写可执行段，且满足「熵值够高」或「带 legacy 保护壳段名（`.arch`、`.srdata`、`.xpdata`、`.xtls`）」其一。段名会随保护壳版本变化，因此只作补充证据，不作为必要条件
+- 若游戏确实带 D 加密但 `pipe.log` 报 `no Denuvo match`，用 `forcedenuvo(appid)` 手动指定，跳过识别直接走授权流程
 
 #### 使用 `extract_tickets` 提取令牌
 
@@ -132,6 +133,9 @@ setStat(1361510, "76561197960287930") -- 使用指定 SteamID 的成就数据用
 -- 若未配置，启用时使用 stats API；否则使用默认 SteamID 76561198028121353
 
 setlegacycdkey(1361510, "XXXXX-XXXXX-XXXXX") -- 第三方老游戏 CD-Key 覆盖，原样存入
+
+forcedenuvo(3321460) -- 识别漏判时手动指定该游戏按 Denuvo 处理，跳过保护扫描直接走授权
+-- 只在 pipe.log 报 "no Denuvo match" 却确认游戏确实带 D 加密时才需要，平时不用配
 
 -- 内建 HTTP（给自建 manifest/eticket 接口用）：返回 body, status_code 两个值
 -- headers 可选，表格式，如 {["Accept"]="application/json"}

@@ -151,7 +151,17 @@ namespace {
         return authIt == g_processAuth.end() ? nullptr : &authIt->second;
     }
 
-    void EnsureScanned(ProcessAuth& auth, const ProcessKey& process) {
+    void EnsureScanned(ProcessAuth& auth, const ProcessKey& process, AppId_t appId) {
+        // 手动指定每次都看：lua 是热重载的，游戏跑起来之后再补配置也要能生效，
+        // 不能因为首次扫描结果已缓存就永久忽略。只升不降，避免识别结果来回翻。
+        if (LuaConfig::IsForcedDenuvo(appId)) {
+            if (!auth.denuvo) {
+                auth.denuvo = true;
+                LOG_PIPE_INFO("DenuvoAuth: appid={} forced denuvo by lua, protection scan skipped", appId);
+            }
+            return;
+        }
+
         if (auth.scanned) {
             LOG_PIPE_TRACE("DenuvoAuth: reusing cached protection result {} denuvo={}",
                            process.DebugString(), auth.denuvo);
@@ -174,7 +184,7 @@ void Apply(const PipeContext& ctx) {
     ProcessAuth& auth = g_processAuth[ctx.process];
     g_pipeProcess[pipeKey] = ctx.process;
 
-    EnsureScanned(auth, ctx.process);
+    EnsureScanned(auth, ctx.process, ctx.appId);
     auth.OnHandshake(ctx, pipeKey);
 }
 
