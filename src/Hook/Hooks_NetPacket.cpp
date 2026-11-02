@@ -1076,7 +1076,9 @@ namespace Hooks_NetPacket_OnlineFix {
             // Fill game_extra_info with the real game name.
             if (broadcast && appid == kOnlineFixAppId) {
                 AppId_t realAppId = Hooks_Misc::ResolveAppId();
-                if (realAppId && LuaConfig::HasDepot(realAppId)) {
+                // 只排除占位值，不再要求 appid 在 Lua 名单里：正版拥有的游戏
+                // 加 -onlinefix 联机时同样要显示游戏名，否则好友侧只看到 480。
+                if (realAppId && realAppId != kOnlineFixAppId) {
                     std::string name = Hooks_Misc::GetGameNameByAppID(realAppId);
                     if (!name.empty()) {
                         game->set_game_extra_info(name);

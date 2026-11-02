@@ -24,6 +24,16 @@ namespace Hooks_Misc {
     // otherwise fall back to GetAppIDForCurrentPipe().
     AppId_t ResolveAppId();
 
+    // 当前是否有 -onlinefix 游戏正在运行。
+    bool IsOnlineFixActive();
+
+    // 游戏首次走 SteamNetworkingSockets 时调用，标记 P2P 已启动。
+    void NotifyNetworkingSocketsUsed();
+
+    // P2P 起来之后才可能为 true：此时 GetAppID 要报 480 让联机会话证书对上。
+    // 本次启动配了 -realappid 则始终为 false，改用真实 appid。
+    bool ShouldReportOnlineFixAppId();
+
     // Get localized game name via GetAppDataFromAppInfo (cached).
     std::string GetGameNameByAppID(AppId_t appId);
 
