@@ -58,14 +58,11 @@
 
 ### Compatible with games protected by Denuvo and SteamStub
 - SteamStub-only games do not require configuring `AppTicket`. OpenSteamTool can reuse Steam's local ConfigStore ticket and forge the requested AppId through a SteamDRMP off-by-four ticket parsing vulnerability, without injecting into the game process.
-
-### Third-party product keys ("Updating product key")
-- For titles that carry a Steam-issued third-party retail key (Ubisoft Connect, Rockstar, etc.), OpenSteamTool answers the client's legacy key request locally, so the "Updating product key" step completes for added games instead of failing. Supply a real key with `setlegacycdkey(appid, "KEY")`; when none is configured a deterministic synthetic key is generated. A synthetic key satisfies Steam's local step only — titles that validate the key online still require a real one.
->>>>>>> pr183
 - Denuvo-protected games still require explicit ticket data. OpenSteamTool stores `AppTicket` and `ETicket` through the platform credential store.
 - Use `setAppTicket(appid, "hex")` and `setETicket(appid, "hex")` in Lua config to write these values to the platform credential store automatically.
 - Denuvo verification has a 30-minute validity window. After this window expires, authorization may fail with Denuvo error code `88500005`; refresh the ticket data before retrying.
 - AppTicket priority: explicit tickets have the highest priority, including tickets configured by `setAppTicket` and existing cached `AppTicket` credential values. If no explicit AppTicket is available, OpenSteamTool falls back to the forged local ConfigStore ticket path.
+- Forging needs a real ticket as the splice base. Sources are tried in this order: appid 7 in memory, then appid 228980 (the Steamworks common redistributable), then the tickets under `apptickets` in `<Steam>/userdata/<account>/config/localconfig.vdf`, and finally the registry key `HKCU\Software\Valve\Steam\Apps\<AppId>\AppTicket` as a last resort. Steam maintains localconfig itself, so it holds the signed-in account's own tickets and is by far the largest and most reliable source; the registry mostly holds only manually configured ones. Only tickets belonging to the signed-in account are used, since borrowing another identity fails the DRM check.
 - SteamID priority: read cached `SteamID` first; if missing, parse from explicit `AppTicket`. On Windows, the credential store backend currently uses `HKCU\Software\Valve\Steam\Apps\<AppId>`. The Linux backend is not implemented yet.
 
 #### Extracting tickets with `extract_tickets`
@@ -95,6 +92,9 @@ The `extract_tickets` tool dumps the `AppTicket` and `ETicket` hex strings you n
 
 > **Note:** Tickets are only valid when extracted from an account that **genuinely owns** the game.
 
+### Third-party product keys ("Updating product key")
+- For titles that carry a Steam-issued third-party retail key (Ubisoft Connect, Rockstar, etc.), OpenSteamTool answers the client's legacy key request locally, so the "Updating product key" step completes for added games instead of failing. Supply a real key with `setlegacycdkey(appid, "KEY")`; when none is configured a deterministic synthetic key is generated. A synthetic key satisfies Steam's local step only — titles that validate the key online still require a real one.
+
 ### Stats and Achievements
 - Enable stats and achievements for unowned games.
 - Uses `setStat(appid, "steamid")` to configure which SteamID's achievement data to pull.
@@ -102,7 +102,10 @@ The `extract_tickets` tool dumps the `AppTicket` and `ETicket` hex strings you n
 - Priority: `setStat` > stats API when enabled and valid > hardcoded preset SteamID `76561198028121353`.
 
 ### Online Fix
-- Add `-onlinefix` to the Steam launch parameters to enable 480-based online play in games that use lobby matchmaking. The current limitation is that only one such game can run at a time.To revert, simply remove -onlinefix from the launch parameters — online play returns to normal on the next launch.
+- Add `-onlinefix` to the Steam launch parameters to enable 480-based online play in games that use lobby matchmaking. The current limitation is that only one such game can run at a time. To revert, simply remove -onlinefix from the launch parameters — online play returns to normal on the next launch.
+- The parameter does not require the game to be in the Lua unlock list; games you genuinely own can use it for online play too.
+- If a game hangs on the loading screen, black-screens, or misbehaves after login, add `-realappid` alongside it: `-onlinefix -realappid`. With that, the game gets its real appid when it asks Steam which game it is, instead of the spoofed 480.
+- Both behaviours are needed by different games and cannot be told apart automatically, so this is per-launch: leave `-realappid` off for titles that need 480 to network, add it for titles that break on 480.
 
 ## Future
 - Steam Cloud synchronization support.(This is a huge project)

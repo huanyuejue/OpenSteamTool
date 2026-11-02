@@ -62,6 +62,7 @@
 - 在 Lua 配置中使用 `setAppTicket(appid, "hex")` 和 `setETicket(appid, "hex")` 自动将这些值写入平台凭据存储
 - Denuvo 验证有 30 分钟有效窗口。过期后授权可能失败，显示 Denuvo 错误代码 `88500005`；重试前请刷新令牌数据
 - AppTicket 优先级：显式令牌优先级最高，包括通过 `setAppTicket` 配置的令牌和已缓存的 `AppTicket` 凭据值。若无可用显式 AppTicket，OpenSteamTool 回退到伪造的本地 ConfigStore 令牌路径
+- 伪造票需要一张真实票据作基底，取票顺序为：内存里的 appid 7 → 内存里的 228980（Steamworks 公共运行库）→ `<Steam>/userdata/<账号>/config/localconfig.vdf` 里 `apptickets` 段的票 → 注册表 `HKCU\Software\Valve\Steam\Apps\<AppId>\AppTicket` 兜底。其中 localconfig 由 Steam 自己维护，存放的是当前账号的正版票据，数量最多也最可靠；注册表那边基本只剩手动配置过的票。取票时只采用与当前登录账号一致的票据，避免借用他人身份导致报错
 - SteamID 优先级：优先读取缓存的 `SteamID`；若缺失，则从显式 `AppTicket` 解析。在 Windows 上，凭据存储后端当前使用 `HKCU\Software\Valve\Steam\Apps\<AppId>`。Linux 后端尚未实现
 - 当前登录账号拥有该游戏时，OpenSteamTool 会在 Denuvo 授权握手结束时自动把真实 `SteamID` 写入凭据存储，无需手工配置。这样用正版账号跑过一次后，换到其他账号也能凭已缓存的身份直接启动
 - Denuvo 识别依次尝试：入口点特征、段内 `DENUVO` 字样，都未命中时回退到结构特征——存在足够大的可写可执行段，且满足「熵值够高」或「带 legacy 保护壳段名（`.arch`、`.srdata`、`.xpdata`、`.xtls`）」其一。段名会随保护壳版本变化，因此只作补充证据，不作为必要条件
@@ -102,6 +103,9 @@
 
 ### 在线修复
 - 在 Steam 启动参数中添加 `-onlinefix` 以在需要使用大厅匹配的游戏里启用基于 480 的在线游戏。当前限制是同一时间只能运行一个这样的游戏。要撤销，只需从启动参数中移除 `-onlinefix` — 下次启动时在线游戏恢复正常
+- 该参数不要求游戏在 Lua 解锁名单里，正版拥有的游戏一样可以用来联机
+- 若游戏启动后卡在加载界面、黑屏或登录后行为异常，在启动参数里再加上 `-realappid`：`-onlinefix -realappid`。加入后游戏询问自身 appid 时会如实返回真实值，而不是伪装成 480
+- 两种行为由不同游戏各自需要，且无法自动判断，所以只能按局指定：需要 480 才能联机的游戏不加 `-realappid`，被 480 卡住的游戏加上它
 
 ## 未来计划
 - Steam 云同步支持。（这是个超级大工程）

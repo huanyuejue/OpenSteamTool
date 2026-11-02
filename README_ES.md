@@ -99,6 +99,9 @@ La herramienta `extract_tickets` vuelca las cadenas hexadecimales de `AppTicket`
 
 ### Online Fix(Reparacion para habilitar el Online)
 - Añade `-onlinefix` a los parámetros de lanzamiento de Steam para habilitar el juego en línea basado en el AppId 480 en juegos que utilizan emparejamiento (matchmaking) por salas (lobbies). La limitación actual es que solo se puede ejecutar uno de estos juegos a la vez. Para revertirlo, simplemente elimina -onlinefix de los parámetros de lanzamiento; el juego en línea volverá a la normalidad en el próximo inicio.
+- El parámetro no exige que el juego esté en la lista de desbloqueo de Lua; los juegos que posees de forma legítima también pueden usarlo para jugar en línea.
+- Si un juego se queda colgado en la pantalla de carga, muestra una pantalla negra o falla tras el inicio de sesión, añade `-realappid` junto a él: `-onlinefix -realappid`. Con eso el juego recibe su AppId real cuando pregunta a Steam qué juego es, en lugar del 480 suplantado.
+- Ambos comportamientos los necesitan juegos distintos y no se pueden distinguir automáticamente, así que se elige por partida: deja fuera `-realappid` en los títulos que necesitan 480 para conectar, y añádelo en los que se rompen con 480.
 
 ## Futuro
 - Soporte para la sincronización con Steam Cloud (este es un proyecto enorme).
