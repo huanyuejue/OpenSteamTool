@@ -68,10 +68,9 @@ namespace {
 
     // 结构兜底的尺寸门槛：太小的 RWX 段是正常的 JIT / 跳板代码，不参与判定。
     constexpr uint32 kProtectorBlobMinBytes = 4u * 1024u * 1024u;
-    // 熵只在日志里记录，用来判断保护壳当前是加密态还是已解密态，不参与判定。
-    // 实测差异极大：同样是 Denuvo，.didata 6.7、.ecode 6.6、.debug 4.8，
-    // 拿它当门槛只会把最后一类漏掉。
-    constexpr double kProtectorBlobHighConfidenceEntropy = 7.0;
+    // 熵达到这个值本身就足以判定，不需要段名佐证：保护壳在盘上是加密态，
+    // 实测 .text 6.64、.ecode 6.63、.didata 6.72 都远高于普通代码段。
+    constexpr double kProtectorBlobEncryptedEntropy = 6.0;
     constexpr size_t kProtectorBlobEntropySampleBytes = 8ull * 1024ull * 1024ull;
 
     double BytesToMiB(uint64 bytes) {
@@ -253,20 +252,19 @@ namespace {
 
     // 结构兜底：抓既没有 OEP 特征、段内也没有 DENUVO 字样的构建。
     //
-    // 判定靠两条同时成立，都不依赖能扫描的特征串：
-    //   1. 存在 Denuvo 的 legacy 段名（.arch/.srdata/.xpdata/.xtls），这是
-    //      保护壳自己改名留下的硬特征；
-    //   2. 存在足够大的可写且可执行段，这是运行时就地解密的必然产物。
-    // 单看第二条不成立：正常加密壳也会产出 RWX 大段。两条一起才够特异。
-    // 熵不参与判定，只写进日志供排查保护壳当时处于加密态还是解密态。
+    // 前提是存在足够大的可写且可执行段——运行时就地解密的必然产物，段头标志位
+    // 在盘上和解密前就能读到。段名不能当必要条件：保护壳每次改版都会换名字，
+    // 同一个游戏不同构建可能从保护区段名换成常规代码段名，只认段名就会漏判。
+    //
+    // 因此段名降级为补充证据，两条任一成立即判定：
+    //   熵   盘上是加密态，最直接，但受样本分布影响，稀疏的构建会偏低；
+    //   段名 保护壳改名留下的痕迹，随版本变化，专给熵偏低时兜底。
+    // 两条都不成立才排除。判定偏向多认：漏判会让整条授权链路失效，而误判还会
+    // 被 GetSpoofSteamID 的名单门控和取票失败的返回值挡住，代价小得多。
     std::optional<DetectionMatch> TryProtectedBlobSection(
         const ModuleCandidate& module,
         const OSTPlatform::PE::Image& image) {
-        if (FindLegacyDenuvoSection(image) == nullptr) {
-            LOG_PIPE_DEBUG("DenuvoAuth: no legacy Denuvo section, structural check not applicable path={}",
-                           module.path);
-            return std::nullopt;
-        }
+        const bool hasLegacySection = FindLegacyDenuvoSection(image) != nullptr;
 
         for (const auto& section : image.Sections()) {
             if (!(section.IsExecutable() && section.IsWritable())) continue;
@@ -277,20 +275,27 @@ namespace {
             const OSTPlatform::PE::ByteBuffer sample = image.ReadRawBytes(section.rawOffset, sampleSize);
             const double entropy = sample.empty() ? 0.0 : SectionEntropy(sample);
 
+            const bool highEntropy = entropy >= kProtectorBlobEncryptedEntropy;
+            if (!highEntropy && !hasLegacySection) {
+                LOG_PIPE_DEBUG("DenuvoAuth: RWX blob skipped, low entropy without legacy section path={} section={} entropy={:.3f}",
+                               module.path, section.name, entropy);
+                continue;
+            }
+
             DetectionMatch match{};
             match.method = DetectionMethod::ProtectedBlobSection;
             match.sectionName = section.name;
             match.entryPointRva = image.EntryPointRva();
             match.matchRawOffset = section.rawOffset;
             match.matchRva = section.virtualAddress;
-            LOG_PIPE_INFO("DenuvoAuth: protector blob section path={} section={} raw_size={} ({:.2f} MB) entropy={:.3f} state={}",
+            LOG_PIPE_INFO("DenuvoAuth: protector blob section path={} section={} raw_size={} ({:.2f} MB) entropy={:.3f} matched_by={}",
                           module.path, section.name, section.rawSize,
                           BytesToMiB(static_cast<uint64>(section.rawSize)), entropy,
-                          entropy >= kProtectorBlobHighConfidenceEntropy ? "encrypted" : "decrypted-or-sparse");
+                          highEntropy ? "entropy" : "legacy-section-name");
             return match;
         }
 
-        LOG_PIPE_DEBUG("DenuvoAuth: legacy section present but no RWX blob large enough path={}", module.path);
+        LOG_PIPE_DEBUG("DenuvoAuth: no qualifying RWX blob path={} legacy_section={}", module.path, hasLegacySection);
         return std::nullopt;
     }
 
