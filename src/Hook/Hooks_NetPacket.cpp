@@ -2,6 +2,7 @@
 #include "Utils/SteamMetadata/ManifestClient.h"
 #include "Utils/Config/Config.h"
 #include "Hooks_Misc.h"
+#include "Hooks_Package.h"
 #include "HookMacros.h"
 #include "dllmain.h"
 #include "Utils/Tickets/AppTicket.h"
@@ -1126,16 +1127,27 @@ namespace Hooks_NetPacket_OnlineFix {
             }
         }
 
-        // 家庭共享归属一律按 Steam 的原生上报透传，不改写。
-        // 借用期间 Steam 报的是出借方 accountid，那是服务器唯一能对上账的归属；
-        // 抹成占位值或别的账号只会让上报和服务器记录的许可对不上，一轮倒计时
-        // 走完就被判定断开。占用名额、到期收回这些本来就是共享规则的一部分。
-        // 这里只留观测，便于对照服务器下发的停玩通知。
+        // 家庭共享归属还原：借用期间 Steam 会把 owner 报成借用人自己，
+        // 但服务器账本里这条 AppId 挂在出借方名下，两边对不上就被当成无许可
+        // 会话，一路倒计时到断开。这里把 owner 改回真实出借方，让上报和服务器
+        // 记录的共享关系一致。
+        // 借来的 AppId 一定会被记下来，记录写下后不再抹除；查不到记录说明不是
+        // 共享游戏，保持原样。名额占用与到期收回仍按 Steam 的规则走。
         for (int i = 0; i < msg.games_played_size(); ++i) {
-            const auto& game = msg.games_played(i);
-            LOG_NETPACKET_DEBUG("FamilySharing: appid {} reported_owner={}",
-                                static_cast<AppId_t>(game.game_id() & UINT32_MAX),
-                                game.has_owner_id() ? game.owner_id() : 0);
+            auto* game = msg.mutable_games_played(i);
+            const AppId_t playedAppId = static_cast<AppId_t>(game->game_id() & UINT32_MAX);
+            const AccountID_t reported = game->has_owner_id() ? game->owner_id() : 0;
+            const AccountID_t lender = Hooks_Package::GetFamilySharedOwner(playedAppId);
+
+            LOG_NETPACKET_DEBUG("FamilySharing: appid {} reported_owner={} lender_lookup={}",
+                                playedAppId, reported, lender);
+
+            if (lender <= 1 || reported == lender) continue;
+
+            LOG_NETPACKET_INFO("FamilySharing: Restoring owner_id {} -> {} for game_id {}",
+                               reported, lender, playedAppId);
+            game->set_owner_id(lender);
+            patched = true;
         }
         if (!patched) return false;
 

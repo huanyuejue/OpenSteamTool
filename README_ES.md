@@ -54,10 +54,10 @@
 - Configura `enabled`, `library_x64` y `library_x86`; la biblioteca inyectada debe coincidir con la arquitectura del proceso de destino.`library_x64` y `library_x86` pueden ser rutas absolutas, o rutas relativas resueltas desde el directorio raíz de Steam.
 
 ### Préstamo familiar
-- Los juegos obtenidos por préstamo familiar siguen las reglas de Steam: ocupan la plaza del prestador y pueden recuperarse cuando este los necesite. La herramienta no interviene en ello.
-- **No añadas juegos de préstamo familiar al Lua.** Al listarlos, la herramienta los trata como una licencia propia, pero la titularidad que declara no coincide con la relación de préstamo que Steam tiene registrada. Steam muestra entonces "este juego compartido ya está en uso" y desconecta la sesión unos minutos después. Sin esa entrada de Lua el mismo juego funciona con normalidad.
-- Para jugar al mismo título a la vez que un familiar, ambas cuentas deben poseerlo, o hay que elegir juegos distintos.
-- Las versiones anteriores reescribían el estado declarado para sortear el límite de plazas. Steam endureció sus comprobaciones en el servidor y ese método ya no funciona, por lo que se eliminó.
+- Los juegos obtenidos por préstamo familiar se pueden jugar directamente y también se pueden añadir al Lua para desbloquear DLC. Antes de informar del estado de juego, la herramienta restaura el propietario al prestador real, de modo que el informe coincide con la relación de préstamo que Steam tiene registrada.
+- Las versiones anteriores sustituían el propietario por un valor de relleno o por ti mismo. Steam no podía asociarlo a ninguna licencia, consideraba la sesión inválida, mostraba "sesión iniciada en otro lugar" y desconectaba a los pocos minutos. La 1.5.4.1 lo corrige.
+- La plaza de préstamo sigue las reglas de Steam: el juego ocupa la plaza del prestador y puede recuperarse cuando este lo necesite. La herramienta no interviene en ello.
+- Para jugar al mismo título a la vez que un familiar, ambas cuentas deben poseerlo. La herramienta solo corrige el propietario declarado, no cambia las reglas de plazas.
 
 ### Compatible con juegos protegidos por Denuvo y SteamStub
 - Los juegos protegidos únicamente por SteamStub no requieren la configuración de `AppTicket`. OpenSteamTool puede reutilizar el ticket local de ConfigStore de Steam y falsificar el AppId solicitado a través de una vulnerabilidad de desbordamiento por cuatro (off-by-four ticket parsing vulnerability) en SteamDRMP, sin necesidad de inyectarse en el proceso del juego.

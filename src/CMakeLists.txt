@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OpenSteamTool VERSION 1.0.0 LANGUAGES C CXX)
+project(OpenSteamTool VERSION 1.5.4.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -169,8 +169,10 @@ target_link_libraries(OpenSteamTool PRIVATE
 )
 
 # Logging is compiled in only for Debug; Release reduces LOG_* to no-ops.
+# 版本号同时以宏的形式带进编译，诊断日志据此打印版本。
 target_compile_definitions(OpenSteamTool PRIVATE
     $<$<CONFIG:Debug>:OPENSTEAMTOOL_LOGGING_ENABLED>
+    OPENSTEAMTOOL_VERSION="${OPENSTEAMTOOL_VERSION}"
 )
 
 # ---------------------------------------------------------------------------
