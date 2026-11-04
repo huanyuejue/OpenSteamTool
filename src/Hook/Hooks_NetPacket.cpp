@@ -14,6 +14,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <format>
 #include <future>
 #include <mutex>
 #include <string_view>
@@ -541,38 +542,47 @@ namespace Hooks_NetPacket_ETicket {
 // ════════════════════════════════════════════════════════════════
 namespace Hooks_NetPacket_FamilySharing {
 
-    void ClearBody(const uint8*, uint32);
+    // 家庭共享的进出方向一概不干预，交给 Steam 按原生规则处理。
+    // 曾经在这里抹掉出借方归属、清空运行列表、丢弃锁库与停玩通知，试图让
+    // 借用方不受共享名额限制。实测那套做法改不动服务器的账：服务器按自己
+    // 记录的许可与占用判定，客户端说什么它都不采信，一轮倒计时走完照样踢线，
+    // 反而因为上报数据和它的账对不上，把原本的软提醒升级成了断开会话。
+    // 现在只保留观测，不改任何内容：占用名额、到期收回都是共享本来的行为。
 
-    // NotifyRunningApps 消毒：保留合法的 family_groupid，只清空 running_apps。
-    // 客户端收到结构合法的"0 个游戏在运行"通知，主动清除库锁定状态。
-    void HandleRecv_NotifyRunningApps(const uint8* pBody, uint32 cbBody)
+    // 停玩通知里写着要停哪个 AppId、归属给谁、还剩多少秒，落盘便于排查。
+    void LogStopPlaying(const uint8* pBody, uint32 cbBody)
     {
-        CFamilyGroupsClient_NotifyRunningApps_Notification notify;
-        if (notify.ParseFromArray(pBody, cbBody)) {
-            const int runningCount = notify.running_apps_size();
-            notify.clear_running_apps();
-
-            const auto encSize = notify.ByteSizeLong();
-            if (encSize <= sizeof(g_NewBody) && notify.SerializeToArray(g_NewBody, static_cast<int>(sizeof(g_NewBody)))) {
-                g_cbNewBody = static_cast<uint32>(encSize);
-                g_NeedReplaceBody = true;
-                LOG_NETPACKET_INFO("FamilySharing: Sanitized NotifyRunningApps (family_groupid {}, cleared {} running apps)",
-                                   notify.family_groupid(), runningCount);
-                return;
-            }
+        CMsgClientSharedLibraryStopPlaying msg;
+        if (!msg.ParseFromArray(pBody, cbBody)) {
+            LOG_NETPACKET_WARN("FamilySharing: StopPlaying body unparsable ({} bytes)", cbBody);
+            return;
         }
 
-        // 解析失败时回退为丢弃整包
-        ClearBody(pBody, cbBody);
-        LOG_NETPACKET_DEBUG("FamilySharing: Cleared NotifyRunningApps body (fallback)");
+        // 正常一次只有一两条，这里仍然设上限：包由服务端给出，
+        // 万一内容异常也不该让日志字符串无界膨胀。
+        constexpr int kMaxLogged = 8;
+        std::string detail;
+        for (int i = 0; i < msg.stop_apps_size() && i < kMaxLogged; ++i) {
+            const auto& app = msg.stop_apps(i);
+            if (!detail.empty()) detail += ", ";
+            detail += std::format("app_id={} owner_id={}",
+                                  app.has_app_id() ? app.app_id() : 0,
+                                  app.has_owner_id() ? app.owner_id() : 0);
+        }
+        if (msg.stop_apps_size() > kMaxLogged) {
+            detail += std::format(", ...(+{})", msg.stop_apps_size() - kMaxLogged);
+        }
+        LOG_NETPACKET_INFO("FamilySharing: StopPlaying seconds_left={} stop_apps=[{}]",
+                           msg.has_seconds_left() ? msg.seconds_left() : -1, detail);
     }
 
-    // 丢弃入方向锁库/停玩通知，压制踢人计时
-    void ClearBody(const uint8*, uint32)
+    // 运行列表只记录不修改，用于确认服务器对占用名额的判定。
+    void LogRunningApps(const uint8* pBody, uint32 cbBody)
     {
-        LOG_NETPACKET_DEBUG("FamilySharing: Clearing incoming family sharing lock/stop notification...");
-        g_cbNewBody = 0;
-        g_NeedReplaceBody = true;
+        CFamilyGroupsClient_NotifyRunningApps_Notification notify;
+        if (!notify.ParseFromArray(pBody, cbBody)) return;
+        LOG_NETPACKET_DEBUG("FamilySharing: NotifyRunningApps (family_groupid {}, {} running apps)",
+                            notify.family_groupid(), notify.running_apps_size());
     }
 
 } // namespace Hooks_NetPacket_FamilySharing
@@ -1064,10 +1074,9 @@ namespace Hooks_NetPacket_OnlineFix {
         const bool broadcast = Hooks_NetPacket_RichPresence::BroadcastEnabled();
 
         bool patched = false;
-        // 采用独立标记跟踪广播重写状态，与防锁库的 owner 掩码解耦，
-        // 避免带 owner 上报时跳过广播重写导致好友侧无状态。
+        // 采用独立标记跟踪广播重写状态：480 那条已经改写过名称之后，
+        // 就不再走下面按 RichPresence 重写游戏名的分支。
         bool didBroadcastRewrite = false;
-        int rewrittenIndex = -1;
         for (int i = 0; i < msg.games_played_size(); ++i) {
             auto* game = msg.mutable_games_played(i);
             AppId_t appid = static_cast<AppId_t>(game->game_id() & UINT32_MAX);
@@ -1084,7 +1093,6 @@ namespace Hooks_NetPacket_OnlineFix {
                         game->set_game_extra_info(name);
                         patched = true;
                         didBroadcastRewrite = true;
-                        rewrittenIndex = i;
                         LOG_ONLINEFIX_INFO("OnlineFix: 480 -> name '{}' (real appid {})",
                             name, realAppId);
                     }
@@ -1113,23 +1121,21 @@ namespace Hooks_NetPacket_OnlineFix {
                     topGame->clear_owner_id();
                     patched = true;
                     didBroadcastRewrite = true;
-                    rewrittenIndex = msg.games_played_size() - 1;
                     LOG_ONLINEFIX_INFO("RichPresence: appid {} -> name '{}'", trackedId, name);
                 }
             }
         }
 
-        // 家庭共享并发保护：抹掉出借方 owner_id，服务器不再锁出借方的库。
-        // 广播重写过的条目跳过掩码，其 owner 已在重写时清空。
+        // 家庭共享归属一律按 Steam 的原生上报透传，不改写。
+        // 借用期间 Steam 报的是出借方 accountid，那是服务器唯一能对上账的归属；
+        // 抹成占位值或别的账号只会让上报和服务器记录的许可对不上，一轮倒计时
+        // 走完就被判定断开。占用名额、到期收回这些本来就是共享规则的一部分。
+        // 这里只留观测，便于对照服务器下发的停玩通知。
         for (int i = 0; i < msg.games_played_size(); ++i) {
-            if (i == rewrittenIndex) continue;
-            auto* game = msg.mutable_games_played(i);
-            if (game->has_owner_id() && game->owner_id() != 0 && game->owner_id() != 1) {
-                LOG_NETPACKET_INFO("FamilySharing: Masking owner_id {} -> 1 for game_id {}",
-                                   game->owner_id(), game->game_id());
-                game->set_owner_id(1);
-                patched = true;
-            }
+            const auto& game = msg.games_played(i);
+            LOG_NETPACKET_DEBUG("FamilySharing: appid {} reported_owner={}",
+                                static_cast<AppId_t>(game.game_id() & UINT32_MAX),
+                                game.has_owner_id() ? game.owner_id() : 0);
         }
         if (!patched) return false;
 
@@ -1513,7 +1519,7 @@ namespace {
         switch (Fnv1aHash(targetJobName)) {
 
         case HASH_JOB_NotifyRunningApps:
-            Hooks_NetPacket_FamilySharing::HandleRecv_NotifyRunningApps(pBody, cbBody);
+            Hooks_NetPacket_FamilySharing::LogRunningApps(pBody, cbBody);
             return;
 
         case HASH_JOB_GetUserStats:
@@ -1526,9 +1532,9 @@ namespace {
 
         // ---- add new 147 service methods here ----
         default:
-            // job 名带版本号后缀时走子串兜底，保证消毒逻辑不漏
+            // job 名带版本号后缀时走子串兜底，保证观测点不漏
             if (std::string_view(targetJobName).find("NotifyRunningApps") != std::string_view::npos) {
-                Hooks_NetPacket_FamilySharing::HandleRecv_NotifyRunningApps(pBody, cbBody);
+                Hooks_NetPacket_FamilySharing::LogRunningApps(pBody, cbBody);
                 return;
             }
             break;
@@ -1550,6 +1556,38 @@ namespace {
 
         switch (eMsg) {
 
+        // 掉线原因只在这条包里，协议是裸 varint：
+        // 字段 1 = eresult。不解出来只能看到"掉线了"，看不出为什么掉。
+        case k_EMsgClientLoggedOff: {                  // 757
+            // 字段 1 是 eresult，varint 编码。这里按最保守的方式解：
+            // 最多读 10 字节、每步先判位移再移位，任何畸形输入都只是解码失败，
+            // 不能越界读也不能产生未定义行为。
+            uint64 eresult = 0;
+            bool decoded = false;
+            if (cbBody > 0 && pBody[0] == 0x08) {
+                uint32 pos = 1;
+                uint32 shift = 0;
+                for (int consumed = 0; consumed < 10 && pos < cbBody; ++consumed) {
+                    const uint8 b = pBody[pos++];
+                    if (shift < 64) {
+                        eresult |= static_cast<uint64>(b & 0x7F) << shift;
+                    }
+                    if (!(b & 0x80)) {
+                        decoded = true;
+                        break;
+                    }
+                    shift += 7;
+                }
+            }
+            if (decoded) {
+                LOG_NETPACKET_INFO("ClientLoggedOff: eresult={} (0=无 1=OK 6=别处登录 34=会话被替换 38=远端断开)",
+                                   eresult);
+            } else {
+                LOG_NETPACKET_INFO("ClientLoggedOff: eresult not decodable ({} bytes)", cbBody);
+            }
+            return;
+        }
+
         case k_EMsgServiceMethod:                      // 146
         case k_EMsgServiceMethodResponse:              // 147
         case k_EMsgServiceMethodSendToClient: {        // 152
@@ -1569,9 +1607,9 @@ namespace {
                 pBody, cbBody);
             return;
 
-        case k_EMsgClientSharedLibraryLockStatus:      // 9405
         case k_EMsgClientSharedLibraryStopPlaying:     // 9406
-            Hooks_NetPacket_FamilySharing::ClearBody(pBody, cbBody);
+            // 停玩通知照常交给 Steam 处理，这里只记录内容。
+            Hooks_NetPacket_FamilySharing::LogStopPlaying(pBody, cbBody);
             return;
 
         case k_EMsgClientPersonaState:                 // 766
