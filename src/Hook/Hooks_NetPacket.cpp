@@ -1104,6 +1104,9 @@ namespace Hooks_NetPacket_OnlineFix {
         // Rich Presence: rewrite topmost unowned game to use the first
         // available shortcut's game_id so the server broadcasts it as a
         // non-Steam game. Falls back to 480 if no shortcuts registered.
+        // 这一段排在家庭共享处理之前，优先级更高：用户开了好友播报就按播报走，
+        // 改完 480 之后后面的分支读到的是新值，自然不会再动它。
+        // 没开播报时这里整体跳过，家庭共享 + lua 才会落到专用分支改替代 id。
         if (broadcast && !didBroadcastRewrite) {
             AppId_t trackedId = Hooks_NetPacket_RichPresence::g_PlayingAppId;
             if (trackedId != 0 && trackedId != kOnlineFixAppId && msg.games_played_size() > 0) {
@@ -1127,27 +1130,61 @@ namespace Hooks_NetPacket_OnlineFix {
             }
         }
 
-        // 家庭共享归属还原：借用期间 Steam 会把 owner 报成借用人自己，
-        // 但服务器账本里这条 AppId 挂在出借方名下，两边对不上就被当成无许可
-        // 会话，一路倒计时到断开。这里把 owner 改回真实出借方，让上报和服务器
-        // 记录的共享关系一致。
-        // 借来的 AppId 一定会被记下来，记录写下后不再抹除；查不到记录说明不是
-        // 共享游戏，保持原样。名额占用与到期收回仍按 Steam 的规则走。
+        // 家庭共享相关的上报处理，按「lua 里有没有」和「Steam 有没有把它当
+        // 借来的」两个条件分成四种情况：
+        //
+        //   自购 + lua      : 走正版路线，报文原样透传（为了补 DLC 才写的 lua）
+        //   家庭共享 + lua  : 改成替代 AppId。服务器只要看到真实 appid 就会按
+        //                     共享许可记账、占用出借方名额；改写后它就认不出来。
+        //                     开了好友播报时这条走不到，前面广播段已经改成 480 了。
+        //   纯 lua 假入库   : 清空归属，服务器查不到这条 AppId 的许可记录，不占名额
+        //   纯家庭共享      : 还原成真实出借方，让客户端和服务器账本对得上，
+        //                     否则倒计时走完会断线；名额按 Steam 规则正常占用
         for (int i = 0; i < msg.games_played_size(); ++i) {
             auto* game = msg.mutable_games_played(i);
             const AppId_t playedAppId = static_cast<AppId_t>(game->game_id() & UINT32_MAX);
             const AccountID_t reported = game->has_owner_id() ? game->owner_id() : 0;
             const AccountID_t lender = Hooks_Package::GetFamilySharedOwner(playedAppId);
+            // inLua 传 true 会把已标记为真拥有的 AppId 排除掉：自购游戏写进
+            // lua 只是为了补 DLC，主游戏本身走正版路线，上报不能动它的报文。
+            const bool inLua = LuaConfig::HasDepot(playedAppId, true);
 
-            LOG_NETPACKET_DEBUG("FamilySharing: appid {} reported_owner={} lender_lookup={}",
-                                playedAppId, reported, lender);
+            LOG_NETPACKET_DEBUG("FamilySharing: appid {} reported_owner={} lender_lookup={} inLua={}",
+                                playedAppId, reported, lender, inLua);
+
+            if (lender > 1 && inLua) {
+                // 共享游戏又写了 lua：改成替代 AppId 上报。服务器只要看到真实
+                // appid 就会按共享许可记账、占用出借方名额；换成别的 id 就认不出来。
+                // 这个 AppId 在服务器上不存在，所以既不会播报也不会记录时长。
+                game->set_game_id(kFamilySharedMaskAppId);
+                // 不填 game_extra_info：这个字段会被服务器拿去当播报的游戏名，
+                // 填上就等于告诉好友在玩什么，和「不播报」的目标相反。
+                game->clear_game_extra_info();
+                game->clear_owner_id();
+                patched = true;
+                LOG_NETPACKET_INFO("FamilySharing: appid {} -> {} (shared+lua, lender {})",
+                                   playedAppId, kFamilySharedMaskAppId, lender);
+                continue;
+            }
+
+            if (inLua) {
+                // 纯 lua 假入库：清空归属，服务器查不到这条 AppId 的许可就
+                // 不按共享许可记账。自购场景在这之前已经被 owned 拦掉了，
+                // 走到这里的都是真正靠假许可跑起来的游戏。
+                if (reported != 0) {
+                    game->clear_owner_id();
+                    patched = true;
+                }
+                continue;
+            }
 
             if (lender <= 1 || reported == lender) continue;
 
-            LOG_NETPACKET_INFO("FamilySharing: Restoring owner_id {} -> {} for game_id {}",
-                               reported, lender, playedAppId);
+            // 只有共享、没写 lua：还原真实出借方
             game->set_owner_id(lender);
             patched = true;
+            LOG_NETPACKET_INFO("FamilySharing: Restoring owner_id {} -> {} for game_id {}",
+                               reported, lender, playedAppId);
         }
         if (!patched) return false;
 

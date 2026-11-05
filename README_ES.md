@@ -54,10 +54,13 @@
 - Configura `enabled`, `library_x64` y `library_x86`; la biblioteca inyectada debe coincidir con la arquitectura del proceso de destino.`library_x64` y `library_x86` pueden ser rutas absolutas, o rutas relativas resueltas desde el directorio raíz de Steam.
 
 ### Préstamo familiar
-- Los juegos obtenidos por préstamo familiar se pueden jugar directamente y también se pueden añadir al Lua para desbloquear DLC. Antes de informar del estado de juego, la herramienta restaura el propietario al prestador real, de modo que el informe coincide con la relación de préstamo que Steam tiene registrada.
-- Las versiones anteriores sustituían el propietario por un valor de relleno o por ti mismo. Steam no podía asociarlo a ninguna licencia, consideraba la sesión inválida, mostraba "sesión iniciada en otro lugar" y desconectaba a los pocos minutos. La 1.5.4.1 lo corrige.
-- La plaza de préstamo sigue las reglas de Steam: el juego ocupa la plaza del prestador y puede recuperarse cuando este lo necesite. La herramienta no interviene en ello.
-- Para jugar al mismo título a la vez que un familiar, ambas cuentas deben poseerlo. La herramienta solo corrige el propietario declarado, no cambia las reglas de plazas.
+- Los juegos obtenidos por préstamo familiar se pueden jugar directamente. Al añadirlos al Lua se pueden jugar al mismo tiempo que un familiar, usando la rama de licencia falsa en lugar de ocupar la plaza del prestador.
+- La vía legítima ya no funciona. Steam endureció la autorización de préstamo en el servidor y ahora decide las sesiones según su propio registro de licencias, sin tener en cuenta el propietario que declara el cliente. El método anterior de restaurar el propietario al prestador real solo hace que el cliente y el servidor no coincidan, y la cuenta atrás termina en desconexión.
+- El método actual saca estos juegos por completo de la lógica de préstamo: la comprobación local de licencias los trata como entradas de licencia falsa, se borran todas las marcas de préstamo y el informe de estado de juego sustituye el AppId por un valor que no existe en el servidor. El servidor no puede reconocer que es un juego compartido, así que ni cuenta la plaza ni envía el aviso de detener la partida.
+- El precio es que estos juegos ya no pasan por la vía legítima: el estado de compra, los logros y el tiempo de juego quedan sobre la licencia falsa, y los amigos no ven el estado real. Es el coste de poder jugar al mismo tiempo.
+- Los juegos compartidos que no están en el Lua siguen las reglas nativas de Steam: ocupan la plaza del prestador y pueden recuperarse cuando este lo necesite. La herramienta no interviene en ello.
+- Con la difusión a amigos activada (`[presence] display = "spacewar"`), estos juegos se informan como Spacewar, de modo que los amigos ven a qué estás jugando, a cambio de que el tiempo se cuente en Spacewar.
+- Nota: los juegos que realmente posees y además añades al Lua no se ven afectados y siguen por la vía legítima. El criterio es si la licencia aparece en más de un paquete de Steam, lo que indica que la compraste de verdad.
 
 ### Compatible con juegos protegidos por Denuvo y SteamStub
 - Los juegos protegidos únicamente por SteamStub no requieren la configuración de `AppTicket`. OpenSteamTool puede reutilizar el ticket local de ConfigStore de Steam y falsificar el AppId solicitado a través de una vulnerabilidad de desbordamiento por cuatro (off-by-four ticket parsing vulnerability) en SteamDRMP, sin necesidad de inyectarse en el proceso del juego.

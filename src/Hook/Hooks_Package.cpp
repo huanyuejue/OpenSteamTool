@@ -28,6 +28,13 @@ namespace {
     std::unordered_map<AppId_t, AccountID_t> g_familySharedOwners;
     std::mutex g_familySharedOwnersMutex;
 
+    // 这个 AppId 有没有出借方记录。判定自购时要用：共享游戏的 bFamilyShared
+    // 在首轮就被清掉了，后面再查标记认不出来，只能靠这张表兜。
+    bool HasFamilySharedOwner(AppId_t appId) {
+        std::lock_guard<std::mutex> lock(g_familySharedOwnersMutex);
+        return g_familySharedOwners.find(appId) != g_familySharedOwners.end();
+    }
+
     bool  g_licenseInitialized = false;
     bool  g_licenseRefreshPending = false;
     // 回退自举一次性标志：看门狗线程置位，Steam IPC 线程消费（原子，跨线程）。
@@ -144,13 +151,25 @@ namespace {
             LOG_PACKAGE_DEBUG("CheckAppOwnership: captured CUser {}", g_pCUser);
         }
 
-        // 必须赶在下面清标记之前记下出借方：原始归属只在这两个标记还在时才有意义。
-        // 记录一旦写下就不再抹除，后续每次上报都要靠它还原 owner。
-        // 只认 bFamilyShared / bBorrowed：这两个标记置位就代表当前是借来用的，
-        // 本人拥有的 AppId 不会带着它们。这条分支在游玩期间会被反复触发，
-        // 值没变就不重复落盘。
+        TryInitFakeLicenseOnce();
+
+        // 自举刷新（只一次）：回退场景下这次调用大概率是第一次，
+        // GetPackageInfo capture 还没就绪，注入做了一半。g_pCUser 本次已就位，
+        // 强制刷一次 license，第二波查询到来时 capture 就绪，注入完成。
+        // exchange 原子取反清零，不可能循环。
+        if (!g_licenseInitialized && g_forceRequeryOnce.exchange(false)) {
+            LOG_PACKAGE_INFO("CheckAppOwnership: priming license re-query after late hook install");
+            MarkLicenseAsChangedAndProcessUpdates();
+        }
+
+        // 记下出借方归属。必须排在下面清标记之前：清完就再也认不出来了。
+        // 这张表有两个用途：
+        //   1. 非 lua 的共享游戏，上报时把 owner 还原成出借方，避免倒计时踢线
+        //   2. 判断某个 AppId 是不是家庭库里的共享游戏（lua 游戏也要记，
+        //      上报时据此改写成替代 AppId，避免占用出借方名额）
+        // 只认借用标记：清掉之后 SteamId32 会被 Steam 改写，拿它做判断不可信。
+        // 记录写下后不再改动——漏记会让共享修复整体失效，宁可留着多余的。
         if (pOwn && (pOwn->bFamilyShared || pOwn->bBorrowed) && pOwn->SteamId32 != 0) {
-            // 日志放到锁外：写盘可能阻塞，不该让上报线程陪着等。
             bool recorded = false;
             {
                 std::lock_guard<std::mutex> lock(g_familySharedOwnersMutex);
@@ -166,30 +185,41 @@ namespace {
             }
         }
 
-        TryInitFakeLicenseOnce();
-
-        // 自举刷新（只一次）：回退场景下这次调用大概率是第一次，
-        // GetPackageInfo capture 还没就绪，注入做了一半。g_pCUser 本次已就位，
-        // 强制刷一次 license，第二波查询到来时 capture 就绪，注入完成。
-        // exchange 原子取反清零，不可能循环。
-        if (!g_licenseInitialized && g_forceRequeryOnce.exchange(false)) {
-            LOG_PACKAGE_INFO("CheckAppOwnership: priming license re-query after late hook install");
-            MarkLicenseAsChangedAndProcessUpdates();
-        }
-
-        if (LuaConfig::HasDepot(appId,false)) {
-            if (result && pOwn->ExistInPackageNums > 1) {
-                // Actually owned — record so HasDepot excludes it going forward
+        // 第二个参数传 true：已经标记为真拥有的 AppId 直接跳过，不再重复判定。
+        if (pOwn && LuaConfig::HasDepot(appId, true)) {
+            // 真拥有的游戏写进 lua 通常是为了补 DLC，主游戏本身不该改走假入库：
+            // 那样会把 Steam 的许可判定覆盖掉，购买状态、成就、时长都会挂到假许可上。
+            //
+            // 判据要同时满足三条，缺一不可：
+            //   1. result：Steam 认这条许可（假入库的也认，所以单看它不够）
+            //   2. ExistInPackageNums > 1：真实包和假许可包同时覆盖
+            //   3. 没有出借方记录：共享游戏也会因为注入假包让这个值涨到 2，
+            //      而且它的 bFamilyShared 在首轮就被我们清掉了，光看标记认不出来。
+            //      g_familySharedOwners 里的记录在清标记之前就写下了，不会漏。
+            const bool borrowed = pOwn->bFamilyShared || pOwn->bBorrowed;
+            const bool knownShared = HasFamilySharedOwner(appId);
+            if (result && pOwn->ExistInPackageNums > 1 && !borrowed && !knownShared) {
                 LuaConfig::MarkOwned(appId);
                 pOwn->ReleaseState = EAppReleaseState::Released;
-            } else {
-                pOwn->PackageId    = kInjectedPackageId;
-                pOwn->ReleaseState = EAppReleaseState::Released;
-                pOwn->bOwnsLicense = true; //This forces DLCs on steam family shared games that u dont own when adding their appid via .lua
-                // Setting this free flag to false will hide it from the library UI.
-                pOwn->bFreeLicense = false;
-                return true;
+                LOG_PACKAGE_INFO("FakeLicense: AppId={} 自己拥有，按正版处理", appId);
+                return result;
             }
+
+            // 剩下的走假入库：家庭库里也有的游戏因此不会占用出借方名额。
+            // 借用相关的标记必须一并抹掉，否则 Steam 后续仍会按共享许可
+            // 追踪这条 AppId，占用和到期收回照旧发生。
+            pOwn->PackageId          = kInjectedPackageId;
+            pOwn->ReleaseState       = EAppReleaseState::Released;
+            pOwn->bOwnsLicense       = true;
+            pOwn->bFreeLicense       = false;
+            pOwn->bFamilyShared      = false;
+            pOwn->bBorrowed          = false;
+            pOwn->bLicenseLocked     = false;
+            pOwn->bLicensePending    = false;
+            pOwn->bLicenseExpired    = false;
+            pOwn->bGuestPass         = false;
+            pOwn->bLicensePermanent  = true;
+            return true;
         }
 
         return result;
