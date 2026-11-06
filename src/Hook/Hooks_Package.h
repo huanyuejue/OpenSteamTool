@@ -16,8 +16,4 @@ namespace Hooks_Package {
     // 只生效一次，避免循环。正常路径（自然查询不断）不受影响。
     void RequestRequeryOnce();
 
-    // 查某个 AppId 记下的出借方 accountid，0 表示不是借来的、没有记录。
-    // 上报游玩状态时要把这个值填回 owner，服务器才认得出这是共享会话。
-    AccountID_t GetFamilySharedOwner(AppId_t appId);
-
 }

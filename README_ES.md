@@ -53,14 +53,8 @@
 - Añade inyección opcional de bibliotecas en procesos de juego mediante `[inject]` en `opensteamtool.toml`.
 - Configura `enabled`, `library_x64` y `library_x86`; la biblioteca inyectada debe coincidir con la arquitectura del proceso de destino.`library_x64` y `library_x86` pueden ser rutas absolutas, o rutas relativas resueltas desde el directorio raíz de Steam.
 
-### Préstamo familiar
-- Los juegos obtenidos por préstamo familiar se pueden jugar directamente. Al añadirlos al Lua se pueden jugar al mismo tiempo que un familiar, usando la rama de licencia falsa en lugar de ocupar la plaza del prestador.
-- La vía legítima ya no funciona. Steam endureció la autorización de préstamo en el servidor y ahora decide las sesiones según su propio registro de licencias, sin tener en cuenta el propietario que declara el cliente. El método anterior de restaurar el propietario al prestador real solo hace que el cliente y el servidor no coincidan, y la cuenta atrás termina en desconexión.
-- El método actual saca estos juegos por completo de la lógica de préstamo: la comprobación local de licencias los trata como entradas de licencia falsa, se borran todas las marcas de préstamo y el informe de estado de juego sustituye el AppId por un valor que no existe en el servidor. El servidor no puede reconocer que es un juego compartido, así que ni cuenta la plaza ni envía el aviso de detener la partida.
-- El precio es que estos juegos ya no pasan por la vía legítima: el estado de compra, los logros y el tiempo de juego quedan sobre la licencia falsa, y los amigos no ven el estado real. Es el coste de poder jugar al mismo tiempo.
-- Los juegos compartidos que no están en el Lua siguen las reglas nativas de Steam: ocupan la plaza del prestador y pueden recuperarse cuando este lo necesite. La herramienta no interviene en ello.
-- Con la difusión a amigos activada (`[presence] display = "spacewar"`), estos juegos se informan como Spacewar, de modo que los amigos ven a qué estás jugando, a cambio de que el tiempo se cuente en Spacewar.
-- Nota: los juegos que realmente posees y además añades al Lua no se ven afectados y siguen por la vía legítima. El criterio es si la licencia aparece en más de un paquete de Steam, lo que indica que la compraste de verdad.
+### Préstamo familiar y juego en remoto
+- Omite las restricciones de Steam Family Sharing sin necesidad de configuración: la biblioteca del prestador nunca se bloquea y los juegos prestados pierden sus marcas de préstamo y bloqueo.
 
 ### Compatible con juegos protegidos por Denuvo y SteamStub
 - Los juegos protegidos únicamente por SteamStub no requieren la configuración de `AppTicket`. OpenSteamTool puede reutilizar el ticket local de ConfigStore de Steam y falsificar el AppId solicitado a través de una vulnerabilidad de desbordamiento por cuatro (off-by-four ticket parsing vulnerability) en SteamDRMP, sin necesidad de inyectarse en el proceso del juego.
