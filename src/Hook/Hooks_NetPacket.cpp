@@ -1550,6 +1550,38 @@ namespace {
 
         switch (eMsg) {
 
+        // 掉线原因只在这条包里，协议是裸 varint：
+        // 字段 1 = eresult。不解出来只能看到"掉线了"，看不出为什么掉。
+        case k_EMsgClientLoggedOff: {                  // 757
+            // 字段 1 是 eresult，varint 编码。这里按最保守的方式解：
+            // 最多读 10 字节、每步先判位移再移位，任何畸形输入都只是解码失败，
+            // 不能越界读也不能产生未定义行为。
+            uint64 eresult = 0;
+            bool decoded = false;
+            if (cbBody > 0 && pBody[0] == 0x08) {
+                uint32 pos = 1;
+                uint32 shift = 0;
+                for (int consumed = 0; consumed < 10 && pos < cbBody; ++consumed) {
+                    const uint8 b = pBody[pos++];
+                    if (shift < 64) {
+                        eresult |= static_cast<uint64>(b & 0x7F) << shift;
+                    }
+                    if (!(b & 0x80)) {
+                        decoded = true;
+                        break;
+                    }
+                    shift += 7;
+                }
+            }
+            if (decoded) {
+                LOG_NETPACKET_INFO("ClientLoggedOff: eresult={} (0=无 1=OK 6=别处登录 34=会话被替换 38=远端断开)",
+                                   eresult);
+            } else {
+                LOG_NETPACKET_INFO("ClientLoggedOff: eresult not decodable ({} bytes)", cbBody);
+            }
+            return;
+        }
+
         case k_EMsgServiceMethod:                      // 146
         case k_EMsgServiceMethodResponse:              // 147
         case k_EMsgServiceMethodSendToClient: {        // 152
