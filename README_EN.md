@@ -53,8 +53,14 @@
 - Add optional game-process library injection through `[inject]` in `opensteamtool.toml`.
 - Configure `enabled`, `library_x64`, and `library_x86`; the injected library must match the target process architecture.`library_x64` and `library_x86` may be absolute paths, or relative paths resolved from the Steam root directory.
 
-### Family Sharing and Remote Play
-- Bypass Steam Family Sharing restrictions with zero configuration: the lender's library is never locked and borrowed games lose their borrowed/license-locked flags.
+### Family Sharing
+- Family Shared games can be played directly. Once listed in Lua they can be played alongside a family member at the same time, going through the fake-license branch instead of taking the lender's running slot.
+- The legitimate path no longer works. Steam tightened server-side sharing authorization and now judges sessions from its own license ledger, ignoring the owner the client reports. The old approach of rewriting the owner back to the real lender now only makes the client and the server disagree, and the countdown ends in a disconnect.
+- The current approach pulls these games out of the sharing logic entirely: local license checks treat them as fake-license entries, every sharing flag is cleared, and the play-state report replaces the AppId with a value that does not exist on the server. The server cannot tell this is a shared game, so it neither counts the slot nor sends a stop-playing notice.
+- The trade-off is that these games no longer run through the legitimate path: purchase state, achievements and playtime all sit on the fake license, and friends cannot see the real play status. That is the price of playing at the same time.
+- Shared games that are not listed in Lua still follow Steam's native rules: they occupy the lender's running slot and can be reclaimed when the lender needs it. The tool does not interfere with that.
+- With friend broadcast enabled (`[presence] display = "spacewar"`), these games are reported as Spacewar instead, so friends can see what you are playing, at the cost of the playtime being counted on Spacewar.
+- Note: games you actually own and also list in Lua are unaffected and keep running through the legitimate path. The check is whether the license shows up in more than one of Steam's packages, which means you really bought it.
 
 ### Compatible with games protected by Denuvo and SteamStub
 - SteamStub-only games do not require configuring `AppTicket`. OpenSteamTool can reuse Steam's local ConfigStore ticket and forge the requested AppId through a SteamDRMP off-by-four ticket parsing vulnerability, without injecting into the game process.
