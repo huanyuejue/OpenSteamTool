@@ -1,6 +1,8 @@
 #include "Hooks_Decryption.h"
 #include "HookMacros.h"
 #include "dllmain.h"
+#include "Utils/Tickets/AppTicket.h"
+#include "Utils/Config/LuaConfig.h"
 #include <string>
 
 namespace {
@@ -16,6 +18,43 @@ namespace {
         std::string name(KeyName);
         LOG_DECRYPTIONKEY_DEBUG("ConfigStore::GetBinary called for pObject={}, eConfigStore={}, KeyName='{}'", 
                                     pObject, static_cast<uint32>(eConfigStore), name);
+
+        // 票据读取。带壳的游戏启动时会在这里取所有权票据，拿不到就过不了壳的校验。
+        // 假入库的游戏本地没有票，用一张真实票据改出目标 appid 补上，
+        // 签名段保持原样，壳按老版本的解析方式能对得上。
+        if (name.rfind("apptickets\\", 0) == 0) {
+            int32 got = oConfigStoreGetBinary(pObject, eConfigStore, KeyName, Key, KeySize);
+            AppId_t ticketAppId = 0;
+            try {
+                ticketAppId = static_cast<AppId_t>(std::stoul(name.substr(11)));
+            } catch (...) {
+                return got;
+            }
+            LOG_DECRYPTIONKEY_DEBUG("ConfigStore appticket '{}': ret={}", name, got);
+
+            if (got <= 0 && ticketAppId != 0 && Key && KeySize != 0 &&
+                LuaConfig::HasDepot(ticketAppId, false)) {
+                AppTicket::AppOwnershipTicket forged{};
+                if (AppTicket::GetAppOwnershipTicket(ticketAppId, forged,
+                        AppTicket::AppTicketSource::ForgeOnly)
+                    && !forged.data.empty()
+                    && forged.data.size() <= KeySize) {
+                    // 顺带把主数据区里的 appid 也改成目标值。插入法只在签名前
+                    // 多塞了一份，按常规偏移读到的还是 donor 的值，两边对不上。
+                    if (forged.data.size() > AppTicket::kAppTicketAppIdOffset + sizeof(AppId_t)) {
+                        memcpy(forged.data.data() + AppTicket::kAppTicketAppIdOffset,
+                               &ticketAppId, sizeof(AppId_t));
+                    }
+                    memcpy(Key, forged.data.data(), forged.data.size());
+                    LOG_DECRYPTIONKEY_DEBUG("ConfigStore appticket '{}': provided forged ticket ({} bytes)",
+                                            name, forged.data.size());
+                    return static_cast<int32>(forged.data.size());
+                }
+                LOG_DECRYPTIONKEY_WARN("ConfigStore appticket '{}': no donor ticket available to forge", name);
+            }
+            return got;
+        }
+
         // Expected shape: ".../<DepotId>\DecryptionKey"
         if (size_t last = name.find("\\DecryptionKey"); last != std::string::npos) {
             if (size_t start = name.find_last_of("\\", last - 1); start != std::string::npos) {

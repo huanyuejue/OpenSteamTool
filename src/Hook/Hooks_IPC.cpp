@@ -46,9 +46,21 @@ namespace {
     // 这个接口在 appid 不在 Lua 名单的情况下也照常分发，其余 handler 不放行。
     uint32 g_onlineFixAppIdHash = 0;
 
+    // 带壳启动器里内嵌的是旧版函数 hash，和新版 Steam 客户端对不上。
+    // 收到那个值时按票据方法处理，否则调用会落到未处理分支，取不到票据。
+    uint32 g_legacyTicketHash = 0;
+    // 存下标不存指针：g_Handlers 是 vector，后续再添加会搬移元素，指针会失效。
+    // 取最大值表示还没登记过。
+    size_t g_legacyTicketIndex = static_cast<size_t>(-1);
+
     static ResolvedHandler* FindHandler(EIPCInterface iface, uint32 funcHash) {
         for (auto& e : g_Handlers) {
             if (e.interfaceID == iface && e.funcHash == funcHash) return &e;
+        }
+        // 旧版 hash 兜底：外壳硬编码的是老值，映射到当前的票据处理器上。
+        if (funcHash == g_legacyTicketHash && g_legacyTicketIndex < g_Handlers.size()) {
+            ResolvedHandler& e = g_Handlers[g_legacyTicketIndex];
+            if (e.interfaceID == iface) return &e;
         }
         return nullptr;
     }
@@ -191,6 +203,8 @@ namespace Hooks_IPC {
         // hash 跟着一起清，否则重装前遗留的值会指向不存在的表项。
         g_Handlers.clear();
         g_onlineFixAppIdHash = 0;
+        g_legacyTicketHash = 0;
+        g_legacyTicketIndex = static_cast<size_t>(-1);
         UNHOOK_BEGIN();
         UNINSTALL_HOOK_C(IPCProcessMessage);
         UNHOOK_END();
@@ -208,6 +222,14 @@ namespace Hooks_IPC {
             if (handler.interfaceID == EIPCInterface::IClientUtils &&
                 strcmp(e.methodName, "GetAppID") == 0) {
                 g_onlineFixAppIdHash = handler.funcHash;
+            }
+            // 记下票据方法的位置和旧版 hash。外壳按老值调用，需要单独兜一层。
+            if (handler.interfaceID == EIPCInterface::IClientUser &&
+                strcmp(e.methodName, "GetAppOwnershipTicketExtendedData") == 0) {
+                g_legacyTicketHash = 0xC7E71244;
+                g_legacyTicketIndex = g_Handlers.size() - 1;
+                LOG_IPC_INFO("Hooks_IPC: legacy ticket hash 0x{:08X} also accepted",
+                             g_legacyTicketHash);
             }
             LOG_IPC_DEBUG("Hooks_IPC: resolved {}", handler.DebugString());
         }
