@@ -1,4 +1,6 @@
 #include "Hooks_SteamUI.h"
+#include "Hooks_Package.h"
+#include "OSTPlatform/include/SteamCredentialStore.h"
 #include "HookManager.h"
 #include "HookMacros.h"
 #include "dllmain.h"
@@ -318,10 +320,40 @@ namespace
     CAPTURE_THIS_FUNC(GetAppByID, CSteamApp*, g_pController,void* pThis, AppId_t appId, bool bCreate);
     CAPTURE_THIS_FUNC(MarkAppChange,void*,g_pAppChangeSource,void* pThis,AppId_t appId, EAppChangeFlags changeFlags);
 
+    // 当前登录账号，取一次缓存住。界面刷新会反复走到补充归属那段，
+    // 而账号在进程生命周期内不会变，没必要每次都读注册表。
+    // 卸载时清掉，热重载后重新取，避免沿用上一轮的账号。
+    std::atomic<uint32_t> g_selfAccountId{0};
+
     HOOK_FUNC(FillInAppOverview, void *, void *pThis, void *pAppOverview, CSteamApp *pApp)
     {
         if (pApp && LuaConfig::HasDepot(pApp->nAppID, false))
         {
+            // 所有者为空身份时，详情页会挂一条"来自家庭库"。假入库的游戏本来就没有
+            // 归属，Steam 填的是 accountid 为 0 的占位值，这里补成当前登录账号。
+            // 真正从别人那借来的游戏不能碰：它们有出借方记录，界面就该显示共享来源。
+            if (pApp->SteamID.GetAccountID() == 0 &&
+                Hooks_Package::GetFamilySharedOwner(pApp->nAppID) == 0)
+            {
+                uint32_t selfAccount = g_selfAccountId.load(std::memory_order_relaxed);
+                if (selfAccount == 0)
+                {
+                    std::wstring universe;
+                    if (OSTPlatform::SteamCredentialStore::GetActiveUser(selfAccount, universe) ==
+                        OSTPlatform::SteamCredentialStore::Status::Ok)
+                        g_selfAccountId.store(selfAccount, std::memory_order_relaxed);
+                    else
+                        selfAccount = 0;
+                }
+
+                if (selfAccount != 0)
+                {
+                    pApp->SteamID.Set(selfAccount, k_EUniversePublic, k_EAccountTypeIndividual);
+                    LOG_STEAMUI_DEBUG("FillInAppOverview: appId={} owner set to self ({})",
+                                      pApp->nAppID, selfAccount);
+                }
+            }
+
             uint32_t t = LuaConfig::GetPurchaseTime(pApp->nAppID);
             if (t)
             {
@@ -485,6 +517,8 @@ namespace Hooks_SteamUI
 
     void Uninstall()
     {
+        // 热重载后要重新取账号，避免沿用上一轮缓存的值。
+        g_selfAccountId.store(0, std::memory_order_relaxed);
         UNHOOK_BEGIN();
         OSTPlatform::Detour::Detach(reinterpret_cast<void**>(&oGetModuleHandleA), reinterpret_cast<void*>(hkGetModuleHandleA));
         OSTPlatform::Detour::Detach(reinterpret_cast<void**>(&oGetModuleHandleW), reinterpret_cast<void*>(hkGetModuleHandleW));
