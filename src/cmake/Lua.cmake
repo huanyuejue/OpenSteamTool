@@ -7,9 +7,13 @@ endif()
 include(FetchCache)
 include(FetchContent)
 
+# 官方站偶尔会返回 5xx，CI 是全新环境每次都现下，撞上就直接构建失败。
+# 备用地址取官方镜像，包结构和主站一致（源码在同名的 src/ 子目录下）。
+# GitHub 上的 tag 包把源码放在仓库根目录，换过去会找不到文件，不能用。
 FetchContent_Declare(
     lua
     URL https://www.lua.org/ftp/lua-5.5.0.tar.gz
+        https://www.tecgraf.puc-rio.br/lua/ftp/lua-5.5.0.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     TLS_VERIFY OFF
 )
