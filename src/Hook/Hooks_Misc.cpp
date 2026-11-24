@@ -2,6 +2,7 @@
 #include "HookMacros.h"
 #include "Utils/HookSupport/VehCommon.h"
 #include "dllmain.h"
+#include <atomic>
 
 namespace {
     // ── Resolve-only functions ─────────────────────────────────────
@@ -11,6 +12,11 @@ namespace {
     // On int3 hit, ctx->Rcx is stored to the named output variable.
     CAPTURE_THIS_FUNC(GetAppIDForCurrentPipe, AppId_t,      g_steamEngine,    void*);
     CAPTURE_THIS_FUNC(GetAppDataFromAppInfo,  int64,        g_pCAppInfoCache, void*, AppId_t, const char*, uint8*, int32);
+
+    // 本次启动的游戏 appid，SpawnProcess 命中时记下来。
+    // 启动游戏这件事只发生一次，比之后靠 GetAppIDForCurrentPipe 现查可靠：
+    // 那条路依赖 capture 就绪和管道状态，掉一次就再也拿不到值了。
+    std::atomic<AppId_t> g_launchedAppId{0};
 
     // Assumes one game at a time.  Set by SpawnProcess VEH when -onlinefix
     // is detected; cleared when a non-onlinefix game launches.
@@ -34,6 +40,9 @@ namespace {
 
         // 每次命中均记录启动参数，用于区分 hook 未触发与启动参数缺失两种情况。
         LOG_MISC_DEBUG("SpawnProcess hit: appid {} cmd=\"{}\"", appId, cmdLine ? cmdLine : "<null>");
+
+        // 记下本次启动的 appid，后续按管道查不到时用它兜底。
+        g_launchedAppId.store(appId, std::memory_order_relaxed);
 
         // 只看启动参数，不再要求 appid 在 Lua 名单里：正版玩家加 -onlinefix
         // 联机同样要生效，解锁名单不该决定联机开关。
@@ -116,6 +125,8 @@ namespace Hooks_Misc {
     void Install() {
         RESOLVE_C(CUtlBufferEnsureCapacity);
 
+        g_launchedAppId.store(0, std::memory_order_relaxed);
+
         ARM_CAPTURE_C(GetAppIDForCurrentPipe);
         ARM_CAPTURE_C(GetAppDataFromAppInfo);
 
@@ -129,6 +140,8 @@ namespace Hooks_Misc {
     }
 
     void Uninstall() {
+        // 热重载后要重新记录，避免沿用上一轮启动的 appid。
+        g_launchedAppId.store(0, std::memory_order_relaxed);
         UNHOOK_BEGIN();
         UNINSTALL_HOOK(BuildSpawnEnvBlock);
         UNINSTALL_HOOK(OptedInMask);
@@ -153,7 +166,14 @@ namespace Hooks_Misc {
     
     AppId_t ResolveAppId() {
         if (g_OnlineFixRealAppId) return g_OnlineFixRealAppId;
-        return GetAppIDForCurrentPipeWrap();
+
+        const AppId_t piped = GetAppIDForCurrentPipeWrap();
+        if (piped != 0) return piped;
+
+        // 管道查不到时退回启动时记下的 appid。带壳的 D 加密游戏在验票
+        // 阶段可能还没建立起可用的管道映射，现查会拿到 0，
+        // 调用方据此跳过处理就再也补不上了。
+        return g_launchedAppId.load(std::memory_order_relaxed);
     }
 
     bool IsOnlineFixActive() {
