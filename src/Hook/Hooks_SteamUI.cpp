@@ -1,4 +1,5 @@
 #include "Hooks_SteamUI.h"
+#include "Hooks_Beta.h"
 #include "Hooks_Package.h"
 #include "OSTPlatform/include/SteamCredentialStore.h"
 #include "HookManager.h"
@@ -329,6 +330,9 @@ namespace
     {
         if (pApp && LuaConfig::HasDepot(pApp->nAppID, false))
         {
+            // UI 已经拿到这个 app 的完整信息，beta 恢复可以动了。
+            Hooks_Beta::NotifyOverview();
+
             // 所有者为空身份时，详情页会挂一条"来自家庭库"。假入库的游戏本来就没有
             // 归属，Steam 填的是 accountid 为 0 的占位值，这里补成当前登录账号。
             // 真正从别人那借来的游戏不能碰：它们有出借方记录，界面就该显示共享来源。
@@ -420,6 +424,9 @@ namespace
                 oMarkAppChange(g_pAppChangeSource, appId, EAppChangeFlags::AppInfoOrConfig);
             }
         }
+        // 主线程每帧都会被调用；beta 恢复在内部节流成低频重试，
+        // 完成后立即短路，不会持续占开销。
+        Hooks_Beta::OnUIThread();
         return oCSteamUIAppControllerRunFrame(pController);
     }
 }

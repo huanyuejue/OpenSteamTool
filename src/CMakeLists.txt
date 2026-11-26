@@ -139,6 +139,7 @@ add_library(OpenSteamTool SHARED
 
     # Per-category hook modules
     Hook/HookManager.cpp
+    Hook/Hooks_Beta.cpp
     Hook/Hooks_CallBack.cpp
     Hook/Hooks_Decryption.cpp
     Hook/Hooks_IPC.cpp

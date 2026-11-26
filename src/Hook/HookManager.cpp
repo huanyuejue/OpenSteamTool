@@ -1,4 +1,5 @@
 #include "HookManager.h"
+#include "Hooks_Beta.h"
 #include "Hooks_CallBack.h"
 #include "Hooks_Decryption.h"
 #include "Hooks_IPC.h"
@@ -32,6 +33,9 @@ namespace SteamClient {
         Hooks_Misc::Install();
         Hooks_NetPacket::Install();
         Hooks_Package::Install();
+        // 只解析地址，不装 detour；必须在 client 模块加载后、UI 线程开始
+        // 调用 OnUIThread 之前完成。
+        Hooks_Beta::Install();
     }
 
     void CoreUnhook() {
@@ -43,6 +47,7 @@ namespace SteamClient {
         Hooks_Misc::Uninstall();
         Hooks_NetPacket::Uninstall();
         Hooks_Package::Uninstall();
+        Hooks_Beta::Uninstall();
         VehCommon::DisarmAll();
         VehCommon::RemoveHandler();
     }

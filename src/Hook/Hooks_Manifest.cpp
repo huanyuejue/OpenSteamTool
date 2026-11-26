@@ -1,4 +1,5 @@
 #include "Hooks_Manifest.h"
+#include "Hooks_Beta.h"
 #include "HookMacros.h"
 #include "dllmain.h"
 #include <format>
@@ -21,6 +22,10 @@ namespace {
               CUtlVector<DepotEntry>* pSharedDepotInfo, void* pSteamApp,
               uint32* pBuildId, bool* pbBetaFallback)
     {
+        // pUserAppMgr 就是 CUserAppManager 实例。beta 恢复模块要拿它调用
+        // SetActiveBeta，这里顺手捕获（只在第一次生效）。
+        Hooks_Beta::NotifyUserAppMgr(pUserAppMgr);
+
         bool result = oBuildDepotDependency(pUserAppMgr, AppId, pUserConfig,
             pDepotInfo, pSharedDepotInfo, pSteamApp, pBuildId, pbBetaFallback);
 
