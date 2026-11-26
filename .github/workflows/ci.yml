@@ -31,6 +31,15 @@ jobs:
       - name: Build ${{ matrix.config }}
         run: cmake --build build --config ${{ matrix.config }}
 
+      - name: Configure hook tests
+        run: cmake -S tests -B build/tests -G "Ninja Multi-Config" "-DOST_GENERATED_DIR=${{ github.workspace }}/build/generated"
+
+      - name: Build hook tests (${{ matrix.config }})
+        run: cmake --build build/tests --config ${{ matrix.config }} --target license_readiness_test
+
+      - name: Run hook tests (${{ matrix.config }})
+        run: ctest --test-dir build/tests -C ${{ matrix.config }} --output-on-failure
+
       - name: Upload artifacts
         if: success()
         uses: actions/upload-artifact@v4

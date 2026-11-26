@@ -1,4 +1,5 @@
 #include "Hooks_Manifest.h"
+#include "Hooks_Package.h"
 #include "HookMacros.h"
 #include "dllmain.h"
 #include <format>
@@ -41,6 +42,13 @@ namespace {
         }
 
         if (!result) return result;
+
+        // A missing license index during startup is not a missing beta. Once
+        // Steam finishes processing licenses, genuine fallback proceeds normally.
+        if (pbBetaFallback && *pbBetaFallback &&
+            Hooks_Package::IsInitialLicenseRefreshPending() && LuaConfig::HasDepot(AppId)) {
+            return false;
+        }
 
         const auto& overrides = LuaConfig::GetManifestOverrides();
         if (overrides.empty()) return result;

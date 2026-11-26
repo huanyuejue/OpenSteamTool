@@ -8,6 +8,9 @@ namespace Hooks_Package {
     void Install();
     void Uninstall();
 
+    // Initial IDs were injected, but Steam has not published their license index.
+    bool IsInitialLicenseRefreshPending();
+
     // Mark package 0 as changed and trigger CClientAppManager_ProcessPendingLicenseUpdates.
     void NotifyLicenseChanged();
 

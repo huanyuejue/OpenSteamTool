@@ -13,7 +13,6 @@
 namespace {
     RESOLVE_FUNC(CUtlMemoryGrow,               void*, CUtlVector<AppId_t>*, int);
     RESOLVE_FUNC(MarkLicenseAsChanged,         int64, void*, uint32, bool);
-    RESOLVE_FUNC(ProcessPendingLicenseUpdates, bool,  void*);
 
     CAPTURE_THIS_FUNC(GetPackageInfo, PackageInfo*,g_pCPackageInfo,void* pThis, uint32 packageId, uint64 accessToken);
     
@@ -36,7 +35,9 @@ namespace {
     }
 
     bool  g_licenseInitialized = false;
-    bool  g_licenseRefreshPending = false;
+    // Appending IDs does not publish their license index. Steam may still be
+    // waiting for appinfo and will retry processing on its own RunFrame path.
+    std::atomic<bool> g_licenseRefreshPending{false};
     // 回退自举一次性标志：看门狗线程置位，Steam IPC 线程消费（原子，跨线程）。
     std::atomic<bool> g_forceRequeryOnce{false};
     // 注入熔断：异常触发即永久停注本会话（游戏顶多不解锁，Steam 活着）。
@@ -53,22 +54,23 @@ namespace {
     constexpr PackageId_t kInjectedPackageId = 0;
     constexpr uint64_t kInjectedPkgAccessToken = 10660652434190618804ull;
 
-    bool MarkLicenseAsChangedAndProcessUpdates() {
+    HOOK_FUNC(ProcessPendingLicenseUpdates, bool, void* pUser) {
+        const bool result = oProcessPendingLicenseUpdates(pUser);
+        if (result && pUser == g_pCUser)
+            g_licenseRefreshPending.store(false);
+        return result;
+    }
+
+    // True means the request was submitted; readiness is tracked separately.
+    bool RequestLicenseRefresh() {
         if (!g_pCUser || !oMarkLicenseAsChanged || !oProcessPendingLicenseUpdates) {
-            LOG_PACKAGE_WARN("MarkLicenseAsChangedAndProcessUpdates: dependencies not ready, skipping");
+            LOG_PACKAGE_WARN("RequestLicenseRefresh: dependencies not ready, skipping");
             return false;
         }
         oMarkLicenseAsChanged(g_pCUser, kInjectedPackageId, true);
-        oProcessPendingLicenseUpdates(g_pCUser);
-        LOG_PACKAGE_DEBUG("MarkLicenseAsChangedAndProcessUpdates: marked package {} as changed and processed updates", kInjectedPackageId);
+        const bool processed = hkProcessPendingLicenseUpdates(g_pCUser);
+        LOG_PACKAGE_DEBUG("RequestLicenseRefresh: marked package {} as changed, processed={}", kInjectedPackageId, processed);
         return true;
-    }
-
-    void TryProcessPendingLicenseRefresh() {
-        if (!g_licenseRefreshPending)
-            return;
-        if (MarkLicenseAsChangedAndProcessUpdates())
-            g_licenseRefreshPending = false;
     }
 
     bool CUtlMemoryGrowWrap(CUtlVector<AppId_t>* pVec, int grow_size) {
@@ -120,7 +122,7 @@ namespace {
 
         g_licenseInitialized = true;
         g_licenseRefreshPending = true;
-        TryProcessPendingLicenseRefresh();
+        RequestLicenseRefresh();
         return true;
     }
 
@@ -159,7 +161,7 @@ namespace {
         // exchange 原子取反清零，不可能循环。
         if (!g_licenseInitialized && g_forceRequeryOnce.exchange(false)) {
             LOG_PACKAGE_INFO("CheckAppOwnership: priming license re-query after late hook install");
-            MarkLicenseAsChangedAndProcessUpdates();
+            RequestLicenseRefresh();
         }
 
         // 记下出借方归属。必须排在下面清标记之前：清完就再也认不出来了。
@@ -260,11 +262,11 @@ namespace Hooks_Package {
     void Install() {
         RESOLVE_C(CUtlMemoryGrow);
         RESOLVE_C(MarkLicenseAsChanged);
-        RESOLVE_C(ProcessPendingLicenseUpdates);
 
         ARM_CAPTURE_C(GetPackageInfo);
 
         HOOK_BEGIN();
+        INSTALL_HOOK_C(ProcessPendingLicenseUpdates);
         INSTALL_HOOK_C(CheckAppOwnership);
         INSTALL_HOOK_C(DepotLicenseGate);
         HOOK_END();
@@ -274,7 +276,12 @@ namespace Hooks_Package {
         UNHOOK_BEGIN();
         UNINSTALL_HOOK_C(CheckAppOwnership);
         UNINSTALL_HOOK_C(DepotLicenseGate);
+        UNINSTALL_HOOK_C(ProcessPendingLicenseUpdates);
         UNHOOK_END();
+    }
+
+    bool IsInitialLicenseRefreshPending() {
+        return g_licenseRefreshPending.load() && !g_injectDisabled.load();
     }
 
     void RequestRequeryOnce() {
@@ -342,7 +349,7 @@ namespace Hooks_Package {
         }
 
         // Mark package 0 as changed and trigger library refresh.
-        if (!MarkLicenseAsChangedAndProcessUpdates()) {
+        if (!RequestLicenseRefresh()) {
             LOG_PACKAGE_WARN("NotifyLicenseChanged: failed to mark license as changed");
             return;
         }
