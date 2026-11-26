@@ -225,6 +225,19 @@ namespace {
         return result;
     }
 
+    // ── DepotLicenseGate ────────────────────────────────────────
+    // Steam 判断某个用户对某个 depot 有没有许可。lua 里配过的 depot 直接放行，
+    // 这样不需要 Steam 先把 depot 列表算出来，装包时也就不会有零 depot 的问题。
+    // 地址由 steam-monitor 按当前 steamclient 的 sha 生成，跟着 pattern 一起下发。
+    HOOK_FUNC(DepotLicenseGate, bool, void* pUser, AppId_t depotId, AppId_t appId) {
+        if (depotId != 0 && LuaConfig::HasDepot(depotId, false)) {
+            LOG_PACKAGE_DEBUG("DepotLicenseGate: granted depot {} for app {}",
+                              depotId, appId);
+            return true;
+        }
+        return oDepotLicenseGate(pUser, depotId, appId);
+    }
+
     HOOK_FUNC(CheckAppOwnership, bool, void* pObj, AppId_t appId, AppOwnership* pOwn) {
         bool result = oCheckAppOwnership(pObj, appId, pOwn);
         // 熔断后直接返回原结果，不再碰任何内存。
@@ -253,12 +266,14 @@ namespace Hooks_Package {
 
         HOOK_BEGIN();
         INSTALL_HOOK_C(CheckAppOwnership);
+        INSTALL_HOOK_C(DepotLicenseGate);
         HOOK_END();
     }
 
     void Uninstall() {
         UNHOOK_BEGIN();
         UNINSTALL_HOOK_C(CheckAppOwnership);
+        UNINSTALL_HOOK_C(DepotLicenseGate);
         UNHOOK_END();
     }
 
