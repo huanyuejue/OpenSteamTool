@@ -22,6 +22,23 @@ struct ParsedUrl {
     bool valid = false;
 };
 
+// 系统代理到底开没开。
+// WinHTTP 的 WINHTTP_ACCESS_TYPE_DEFAULT_PROXY 只认 ProxyServer 这个字符串，
+// 不管 ProxyEnable 是不是 0。代理软件关掉之后通常只在注册表留下服务器地址，
+// 于是每次请求都会去连一个没人监听的端口，一路卡到超时。
+// 这里按 ProxyEnable 判断：它是系统里真正控制代理开关的那一项。
+bool SystemProxyEnabled() {
+    DWORD enabled = 0;
+    DWORD size = sizeof(enabled);
+    const LSTATUS status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+        L"ProxyEnable",
+        RRF_RT_REG_DWORD, nullptr, &enabled, &size);
+    if (status != ERROR_SUCCESS || size != sizeof(enabled)) return false;
+    return enabled != 0;
+}
+
 ParsedUrl ParseUrl(const char* rawUrl) {
     ParsedUrl out;
     if (!rawUrl) return out;
@@ -78,8 +95,13 @@ Result Execute(const wchar_t* method,
 
     auto t0 = std::chrono::steady_clock::now();
 
+    const bool useSystemProxy = SystemProxyEnabled();
+    OSTP_LOG_DEBUG("{} - proxy mode: {}", url ? url : "",
+                   useSystemProxy ? "system" : "direct");
+
     HINTERNET hSession = WinHttpOpen(L"OpenSteamTool/1.0",
-        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        useSystemProxy ? WINHTTP_ACCESS_TYPE_DEFAULT_PROXY
+                       : WINHTTP_ACCESS_TYPE_NO_PROXY,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS,
         0);

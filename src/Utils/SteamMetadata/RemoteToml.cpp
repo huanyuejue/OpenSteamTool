@@ -4,10 +4,16 @@
 #include "Utils/Logging/Log.h"
 #include "Utils/SteamMetadata/SteamDiagnostics.h"
 
+#include <windows.h>
+
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace RemoteToml {
@@ -56,6 +62,156 @@ namespace {
         ReplaceAll(urlTemplate, "{component}", request.component);
         ReplaceAll(urlTemplate, "{sha256}", sha256);
         return urlTemplate;
+    }
+
+    // 带硬性上限的请求。
+    // WinHTTP 自带的超时只管到"等待数据"那一步：服务器接了连接却迟迟不开始
+    // 应答时，调用会一直挂在那里。平时无害，但这段代码跑在装 hook 的过程里，
+    // 一挂就把整个启动流程钉死，用户只能去任务管理器结束 Steam。
+    // 所以这里把请求放独立线程跑，主线程到点就放弃，让调用方走失败分支。
+    static OSTPlatform::Http::Result ExecuteWithDeadline(const char* url,
+                                                          uint32_t budgetMs) {
+        struct State {
+            std::mutex mutex;
+            std::condition_variable cv;
+            bool done = false;
+            OSTPlatform::Http::Result result;
+        };
+
+        // 用共享状态而不是栈对象：超时后工作线程可能还在跑。
+        auto state = std::make_shared<State>();
+        const std::string urlCopy = url ? url : "";
+
+        std::thread worker([state, urlCopy] {
+            auto r = OSTPlatform::Http::Execute(L"GET", urlCopy.c_str(),
+                                                nullptr, 0, nullptr);
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->result = std::move(r);
+                state->done = true;
+            }
+            state->cv.notify_all();
+        });
+
+        {
+            std::unique_lock<std::mutex> lock(state->mutex);
+            if (state->cv.wait_for(lock, std::chrono::milliseconds(budgetMs),
+                                   [&] { return state->done; })) {
+                lock.unlock();
+                worker.join();
+                return state->result;
+            }
+        }
+
+        LOG_WARN("RemoteToml: request exceeded {}ms deadline, abandoning URL {}",
+                 budgetMs, urlCopy);
+        // 底层调用还卡在里面，没法安全终止，只能放手让它自己退出。
+        worker.detach();
+        return OSTPlatform::Http::Result{};
+    }
+
+    // WinHTTP 在部分机器上光是建立连接就要好几秒，同一条链接换系统自带的 curl
+    // 只要一两百毫秒——差别在连接过程，不在网络本身。
+    // curl 跑在独立进程里，不跟 Steam 自己的网络初始化抢资源，所以拿它兜底。
+    static bool FetchWithCurl(const std::string& url,
+                              const std::filesystem::path& outPath,
+                              std::string& body) {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::remove(outPath, ec);
+
+        auto toWide = [](const std::string& s) {
+            if (s.empty()) return std::wstring();
+            const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(),
+                                              static_cast<int>(s.size()), nullptr, 0);
+            if (n <= 0) return std::wstring();
+            std::wstring w(static_cast<size_t>(n), L'\0');
+            MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                                w.data(), n);
+            return w;
+        };
+
+        // 干净的收尾：不管成功失败都把这个临时文件清掉，
+        // 免得缓存目录里堆一圈没用的 .curl 副本。
+        // 存值不存引用：守卫活到函数结束，拿引用等于把自己和参数的寿命绑死。
+        struct Cleanup {
+            std::filesystem::path path;
+            ~Cleanup() {
+                std::error_code cleanupEc;
+                std::filesystem::remove(path, cleanupEc);
+            }
+        } cleanup{outPath};
+
+        // 走绝对路径：不依赖 PATH 里有没有 System32，也不怕被同名的 curl
+        // 抢先解析到。Win10 1803 起系统自带这个程序，找不到就当兜底不可用。
+        wchar_t sysDir[MAX_PATH] = {};
+        const UINT sysLen = GetSystemDirectoryW(sysDir, MAX_PATH);
+        if (sysLen == 0 || sysLen >= MAX_PATH) {
+            LOG_WARN("RemoteToml: GetSystemDirectoryW failed (error={})", GetLastError());
+            return false;
+        }
+        std::wstring curlExe(sysDir, sysLen);
+        curlExe += L"\\curl.exe";
+        if (GetFileAttributesW(curlExe.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            LOG_WARN("RemoteToml: curl.exe not present in system directory, fallback unavailable");
+            return false;
+        }
+
+        // --max-time 压在外部等待时限之下，让 curl 自己先超时退出，
+        // 走到 12 秒那一步说明进程真的卡住了，才需要强制结束。
+        std::wstring cmd = L"\"" + curlExe + L"\" -sS -L --max-time 10 -o \"";
+        cmd += toWide(outPath.string());
+        cmd += L"\" \"";
+        cmd += toWide(url);
+        cmd += L"\"";
+
+        std::vector<wchar_t> cmdBuf(cmd.begin(), cmd.end());
+        cmdBuf.push_back(L'\0');
+
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(nullptr, cmdBuf.data(), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+            LOG_WARN("RemoteToml: curl fallback failed to start (error={})", GetLastError());
+            return false;
+        }
+
+        // 比 curl 自己的 --max-time 多一点余量就够，超出说明进程卡住了。
+        if (WaitForSingleObject(pi.hProcess, 12000) != WAIT_OBJECT_0) {
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 2000);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            LOG_WARN("RemoteToml: curl fallback timed out {}", url);
+            return false;
+        }
+
+        DWORD exitCode = 1;
+        GetExitCodeProcess(pi.hProcess, &exitCode);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+
+        if (exitCode != 0) {
+            LOG_WARN("RemoteToml: curl fallback exited {} ({})", exitCode, url);
+            return false;
+        }
+
+        {
+            std::ifstream ifs(outPath, std::ios::binary);
+            if (ifs) {
+                body.assign((std::istreambuf_iterator<char>(ifs)),
+                            std::istreambuf_iterator<char>());
+            }
+        }   // 先让流析构：Windows 上文件被占用时删不掉
+        fs::remove(outPath, ec);
+        if (body.empty()) {
+            LOG_WARN("RemoteToml: curl fallback produced empty body ({})", url);
+            return false;
+        }
+        return true;
     }
 
     static std::vector<std::string> BuildUrlTemplates()
@@ -149,19 +305,43 @@ Result Fetch(const Request& request)
         LOG_INFO("RemoteToml({}/{}): downloading {}",
                  request.channel, request.component, lastUrl);
 
-        http = OSTPlatform::Http::Execute(L"GET", lastUrl.c_str(),
-                                          nullptr, 0, nullptr);
-
-        const bool is404 = http.ok && http.status == 404;
-        const bool gotBody = http.ok && http.status == 200 && !http.body.empty();
-        if (!gotBody && !is404) {
-            LOG_INFO("RemoteToml({}/{}): transport failed ({} ok={} HTTP={}), retrying once",
-                     request.channel, request.component, lastUrl, http.ok, http.status);
-            http = OSTPlatform::Http::Execute(L"GET", lastUrl.c_str(),
-                                              nullptr, 0, nullptr);
-        }
+        // 单次请求封顶 5 秒：启动路径上不能久等，卡住就换下一个镜像。
+        constexpr uint32_t kRequestBudgetMs = 5000;
+        http = ExecuteWithDeadline(lastUrl.c_str(), kRequestBudgetMs);
 
         if (http.ok && http.status == 200 && !http.body.empty()) break;
+
+        // WinHTTP 在这类机器上光是建连接就要好几秒，同一条链接交给系统自带的
+        // curl 只要一两百毫秒。所以每个镜像内部先走 WinHTTP，没拿到东西就立刻
+        // 用 curl 补一次，还不行再换下一个镜像。404 说明上游确实没有这个文件，
+        // 换方式重试也没用，直接跳到下一个镜像。
+        if (!(http.ok && http.status == 404)) {
+            const fs::path tmpOut = cachePath.string() + ".curl";
+            std::string body;
+            LOG_INFO("RemoteToml({}/{}): trying curl fallback {}",
+                     request.channel, request.component, lastUrl);
+            if (FetchWithCurl(lastUrl, tmpOut, body)) {
+                std::error_code writeEc;
+                {
+                    std::ofstream ofs(cachePath, std::ios::binary | std::ios::trunc);
+                    if (ofs) {
+                        ofs.write(body.data(), static_cast<std::streamsize>(body.size()));
+                        ofs.close();
+                    }
+                    if (!ofs) writeEc = std::make_error_code(std::errc::io_error);
+                }
+                if (writeEc) {
+                    LOG_WARN("RemoteToml({}/{}): curl fallback could not write cache {}",
+                             request.channel, request.component, cachePathText);
+                } else {
+                    LOG_INFO("RemoteToml({}/{}): cached to {} (curl)",
+                             request.channel, request.component, cachePathText);
+                }
+                out.body = std::move(body);
+                out.ok = true;
+                return out;
+            }
+        }
 
         const bool hasNext = (i + 1 < urlTemplates.size());
         if (http.ok && http.status == 200) {
