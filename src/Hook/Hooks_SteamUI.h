@@ -31,4 +31,8 @@ namespace Hooks_SteamUI {
     void QueueRemoval(AppId_t appId);
     // Cancels a queued removal when the app is added again before the UI drains it.
     void CancelRemoval(AppId_t appId);
+
+    // 新入库的 app 排进队列，等界面线程把它补进库里。
+    // 光改许可列表 Steam 不会自己重新扫一遍，得在界面线程上主动通知。
+    void QueueAddition(AppId_t appId);
 }

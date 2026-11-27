@@ -6,6 +6,7 @@
 #include "dllmain.h"
 #include "steam_messages.pb.h"
 #include "Utils/HookSupport/VehCommon.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -369,15 +370,25 @@ namespace
     std::mutex g_removalMutex;
     std::vector<AppId_t> g_pendingRemovals;
     std::unordered_set<AppId_t> g_removedAppIds;
+    // 新入库的 app，同样排到界面线程去补进库里。
+    std::vector<AppId_t> g_pendingAdditions;
 
-    // A full rebuild never lists removed_appid for apps still in the map
-    // so re-assert our set after the snapshot is built.
+    // 全量重建时 Steam 只列出当前还在库里的条目，不会带 removed_appid，
+    // 所以我们自己知道的那些下架的 id 要补进去，否则它们会重新冒出来。
+    // 补完就清空：这些 id 的 OwnershipFlags 已经是 None，后续重建本来就不会
+    // 把它们算进来，攒着只会让每一批变更都带上"有东西被移除"的标记，
+    // 新入库的游戏反而刷不出来。
     HOOK_FUNC(BuildCompleteAppOverviewChange, void, void *pController,
               CAppOverview_Change *pChange, void *optionalCallbackSlot)
     {
         oBuildCompleteAppOverviewChange(pController, pChange, optionalCallbackSlot);
         std::lock_guard<std::mutex> lock(g_removalMutex);
-        if (pChange && !g_removedAppIds.empty() && oRepeatedFieldUint32_Add)
+        if (g_removedAppIds.empty()) return;
+
+        // 只有真补进去了才清空。这一批快照带上这些 id 之后，后续重建靠
+        // OwnershipFlags 已是 None 自然把它们排除在外。如果这次没补成
+        // （pChange 为空或补字段的函数没解析到），留着等下一次重建再补。
+        if (pChange && oRepeatedFieldUint32_Add)
         {
             auto* field = pChange->mutable_removed_appid();
             for (AppId_t appId : g_removedAppIds){
@@ -385,6 +396,7 @@ namespace
             }
             LOG_STEAMUI_DEBUG("BuildCompleteAppOverviewChange: appended {} removed_appid entries",
                               g_removedAppIds.size());
+            g_removedAppIds.clear();
         }
     }
 
@@ -395,6 +407,28 @@ namespace
     {
         if (CAPTURE_READY(GetAppByID) && CAPTURE_READY(MarkAppChange))
         {
+            // 新增优先处理：先把新 app 补进库里，再处理要下架的。
+            // 顺序反过来的话，同一批变更里既有增又有删时，删除会把刚加上的
+            // 许可又抹掉。
+            std::vector<AppId_t> adding;
+            {
+                std::lock_guard<std::mutex> lock(g_removalMutex);
+                adding.swap(g_pendingAdditions);
+            }
+            for (AppId_t appId : adding)
+            {
+                // 已经不在配置里就别加回库里，不然删掉的文件会被重新塞进库。
+                if (!LuaConfig::HasDepot(appId, false))
+                {
+                    LOG_STEAMUI_DEBUG("RunFrame: appId {} no longer configured, skipping addition", appId);
+                    continue;
+                }
+                // 用 AddedOrCreated 而不是配置变更：前者是"这个 app 刚出现"
+                // 的语义，Steam 收到后会把它当新条目建进库里；后者只更新已有
+                // 条目，新入库的游戏因此一直刷不出来。
+                oMarkAppChange(g_pAppChangeSource, appId, EAppChangeFlags::AddedOrCreated);
+            }
+
             std::vector<AppId_t> draining;
             {
                 std::lock_guard<std::mutex> lock(g_removalMutex);
@@ -519,6 +553,13 @@ namespace Hooks_SteamUI
     {
         // 热重载后要重新取账号，避免沿用上一轮缓存的值。
         g_selfAccountId.store(0, std::memory_order_relaxed);
+        {
+            // 队列里的东西是给下一轮界面线程用的，换一份 hook 之后不该再留着。
+            std::lock_guard<std::mutex> lock(g_removalMutex);
+            g_pendingAdditions.clear();
+            g_pendingRemovals.clear();
+            g_removedAppIds.clear();
+        }
         UNHOOK_BEGIN();
         OSTPlatform::Detour::Detach(reinterpret_cast<void**>(&oGetModuleHandleA), reinterpret_cast<void*>(hkGetModuleHandleA));
         OSTPlatform::Detour::Detach(reinterpret_cast<void**>(&oGetModuleHandleW), reinterpret_cast<void*>(hkGetModuleHandleW));
@@ -540,6 +581,17 @@ namespace Hooks_SteamUI
     {
         std::lock_guard<std::mutex> lock(g_removalMutex);
         g_pendingRemovals.push_back(appId);
+    }
+
+    void QueueAddition(AppId_t appId)
+    {
+        std::lock_guard<std::mutex> lock(g_removalMutex);
+        // 同一个 id 可能因为连着几次刷新被排进来，重复的没必要处理两遍。
+        if (std::find(g_pendingAdditions.begin(), g_pendingAdditions.end(), appId) ==
+            g_pendingAdditions.end())
+        {
+            g_pendingAdditions.push_back(appId);
+        }
     }
 
     void CancelRemoval(AppId_t appId)

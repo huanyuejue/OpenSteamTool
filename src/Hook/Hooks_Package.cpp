@@ -348,6 +348,12 @@ namespace Hooks_Package {
         }
         LOG_PACKAGE_INFO("NotifyLicenseChanged: {} added, {} removed", addedIds.size(), removedCount);
 
+        // 新入库的 app 交给界面线程补进库。只改包的 AppIdVec 不够，Steam
+        // 不会自己重新扫一遍列表，得在界面线程上主动通知一次。
+        for (AppId_t id : addedIds) {
+            Hooks_SteamUI::QueueAddition(id);
+        }
+
         // Queue UI removals for the main-thread RunFrame hook to drain.
         // Never touch MarkAppChange from this (FileWatcher) thread.
         size_t queuedRemovalCount = 0;
